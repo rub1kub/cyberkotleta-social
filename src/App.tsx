@@ -2349,11 +2349,11 @@ function SpacePage({
         className="profile-cover space-cover wall-cover field-wall-cover"
         style={getWallCoverStyle(space)}
       >
+        <span className="space-kicker">Доска</span>
         <div className="space-copy">
           <div className="wall-title-row">
             <WallAvatar fallback={space.name} wall={space} />
             <div>
-              <span className="space-kicker">Доска</span>
               <h1>
                 <ChannelName wall={space} size="hero" />
               </h1>
@@ -4108,11 +4108,11 @@ function ProfilePage({
         className="profile-cover space-cover wall-cover field-wall-cover profile-wall-cover"
         style={getWallCoverStyle(profileWall)}
       >
+        <span className="space-kicker">Доска</span>
         <div className="space-copy">
           <div className="wall-title-row">
             {profileWall?.avatarUrl ? <WallAvatar fallback={user.name} wall={profileWall} /> : <Avatar user={user} />}
             <div>
-              <span className="space-kicker">Доска</span>
               <h1>{user.name}</h1>
               <p>{user.handle}</p>
             </div>
@@ -4330,11 +4330,11 @@ function MinecraftUtility({
   return (
     <section className="space-page field-page board-space-page minecraft-space-page" style={pageStyle}>
       <div className="profile-cover space-cover wall-cover field-wall-cover minecraft-wall-cover" style={getWallCoverStyle(wall)}>
+        <span className="space-kicker">Доска</span>
         <div className="space-copy">
           <div className="wall-title-row">
             <WallAvatar fallback={wall.name} wall={wall} />
             <div>
-              <span className="space-kicker">Доска</span>
               <h1>
                 <ChannelName wall={wall} size="hero" />
               </h1>

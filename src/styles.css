@@ -5148,6 +5148,17 @@ body {
   padding: 24px;
 }
 
+.wall-cover > .space-kicker {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 2;
+}
+
+.wall-cover .wall-title-row {
+  padding-top: 18px;
+}
+
 .profile-wall-cover {
   align-items: center;
 }
@@ -5400,10 +5411,6 @@ button:focus-visible {
   touch-action: none;
 }
 
-.field-board .wall-board-item {
-  transform: translate(var(--board-x), calc(var(--board-y) + var(--field-board-safe-top)));
-}
-
 .board-space-page {
   --field-board-safe-top: 0px;
 }
@@ -5442,11 +5449,6 @@ button:focus-visible {
 
 .profile-board-page .profile-cover.space-cover.wall-cover {
   grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
-}
-
-.profile-board-page,
-.board-space-page {
-  --field-board-safe-top: 384px;
 }
 
 .minecraft-space-page {
