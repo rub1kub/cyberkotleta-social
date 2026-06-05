@@ -1150,7 +1150,6 @@ function App() {
             <Avatar user={activeUser} />
             <span>
               <strong>{activeUser.name}</strong>
-              <small>{formatMinutes(activeUser.timeOnSiteMinutes)}</small>
             </span>
           </button>
         ) : null}
