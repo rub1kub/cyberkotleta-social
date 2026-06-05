@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.DS_Store
+*.local
+.local/
+.env
+.env.*
+!.env.example
+*.log
+.lazyweb/
+outputs/
+docs/subagents.md

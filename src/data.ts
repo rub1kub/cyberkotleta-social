@@ -1,0 +1,168 @@
+import type { SocialState } from "./types";
+
+const now = Date.now();
+
+export const initialState: SocialState = {
+  siteSections: [
+    {
+      id: "feed",
+      name: "Поле",
+      kind: "social",
+    },
+    {
+      id: "top",
+      name: "Пульс",
+      kind: "leaderboard",
+    },
+  ],
+  users: [
+    {
+      id: "guest",
+      name: "Гость",
+      handle: "@guest",
+      bio: "Пишет без привязки к Discord.",
+      joinedAt: now,
+      timeOnSiteMinutes: 0,
+    },
+    {
+      id: "rub1kub",
+      name: "rub1kub",
+      handle: "@rub1kub",
+      bio: "Ведёт свою доску и делится короткими заметками.",
+      joinedAt: now - 1000 * 60 * 60 * 24 * 42,
+      timeOnSiteMinutes: 420,
+    },
+    {
+      id: "kotleta",
+      name: "Котлета",
+      handle: "@kotleta",
+      bio: "Пишет короткие заметки.",
+      joinedAt: now - 1000 * 60 * 60 * 24 * 30,
+      timeOnSiteMinutes: 260,
+    },
+    {
+      id: "navi",
+      name: "Нави",
+      handle: "@navi",
+      bio: "Тестирует идеи и интерфейс.",
+      joinedAt: now - 1000 * 60 * 60 * 24 * 18,
+      timeOnSiteMinutes: 185,
+    },
+  ],
+  activeUserId: "guest",
+  walls: [
+    {
+      id: "main",
+      siteSectionId: "feed",
+      name: "Общая",
+      ownerId: "rub1kub",
+      description: "Общая доска для коротких заметок и быстрых обсуждений.",
+      rules: "Без спама и личных данных.",
+      publishMode: "open",
+    },
+    {
+      id: "notes",
+      siteSectionId: "feed",
+      name: "Заметки",
+      ownerId: "rub1kub",
+      description: "Тихие записи, мысли и заметки.",
+      rules: "Пиши по делу.",
+      publishMode: "open",
+    },
+  ],
+  posts: [
+    {
+      id: "post-1",
+      wallId: "main",
+      authorId: "rub1kub",
+      text: "Проверка связи.",
+      attachments: [],
+      reactions: 18,
+      views: {
+        total: 3,
+        uniqueUserIds: ["rub1kub", "kotleta", "navi"],
+      },
+      createdAt: now - 1000 * 60 * 20,
+    },
+    {
+      id: "post-2",
+      wallId: "main",
+      authorId: "kotleta",
+      text: "Короткая заметка в общую.",
+      attachments: [],
+      reactions: 12,
+      views: {
+        total: 2,
+        uniqueUserIds: ["rub1kub", "kotleta"],
+      },
+      createdAt: now - 1000 * 60 * 95,
+    },
+    {
+      id: "post-3",
+      wallId: "notes",
+      authorId: "navi",
+      text: "Проверил новый формат заметок.",
+      attachments: [],
+      reactions: 7,
+      views: {
+        total: 2,
+        uniqueUserIds: ["navi", "rub1kub"],
+      },
+      createdAt: now - 1000 * 60 * 180,
+    },
+  ],
+  comments: [
+    {
+      id: "comment-1",
+      postId: "post-1",
+      authorId: "kotleta",
+      text: "Вижу.",
+      attachments: [],
+      reactions: 3,
+      createdAt: now - 1000 * 60 * 16,
+    },
+    {
+      id: "comment-2",
+      postId: "post-1",
+      parentId: "comment-1",
+      authorId: "rub1kub",
+      text: "Тогда можно собирать обсуждения.",
+      attachments: [],
+      reactions: 2,
+      createdAt: now - 1000 * 60 * 14,
+    },
+  ],
+  follows: [
+    {
+      id: "follow-1",
+      targetId: "kotleta",
+      targetType: "user",
+      createdAt: now - 1000 * 60 * 60 * 5,
+    },
+    {
+      id: "follow-2",
+      targetId: "main",
+      targetType: "wall",
+      createdAt: now - 1000 * 60 * 60 * 3,
+    },
+  ],
+  savedPostIds: ["post-1"],
+  pinnedPostIds: ["post-1"],
+  hiddenPostIds: [],
+  hiddenCommentIds: [],
+  pixelCells: [],
+  pixelCooldowns: {},
+  notifications: [
+    {
+      id: "notification-1",
+      kind: "comment",
+      actorId: "kotleta",
+      recipientId: "rub1kub",
+      postId: "post-1",
+      commentId: "comment-1",
+      text: "Котлета ответил на заметку",
+      createdAt: now - 1000 * 60 * 16,
+    },
+  ],
+  reports: [],
+};
