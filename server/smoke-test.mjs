@@ -1,10 +1,12 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 
 const port = 43000 + Math.floor(Math.random() * 1000);
 const dataDir = await mkdtemp(join(tmpdir(), "kotleta-server-"));
+await mkdir(join(dataDir, "downloads"), { recursive: true });
+await writeFile(join(dataDir, "downloads", "smoke-pack.zip"), "zip smoke");
 const server = spawn(process.execPath, ["server/index.mjs"], {
   env: {
     ...process.env,
@@ -77,6 +79,11 @@ try {
   const rootResponse = await fetch(`http://127.0.0.1:${port}/`);
   assert(rootResponse.headers.get("Content-Security-Policy")?.includes("default-src 'self'"), "CSP header is missing");
   assert(rootResponse.headers.get("X-Frame-Options") === "DENY", "frame protection header is missing");
+
+  const downloadResponse = await fetch(`http://127.0.0.1:${port}/downloads/smoke-pack.zip`, { method: "HEAD" });
+  assert(downloadResponse.ok, "download file did not serve back");
+  assert(downloadResponse.headers.get("Content-Type") === "application/zip", "download content type is wrong");
+  assert(downloadResponse.headers.get("Content-Disposition")?.includes("smoke-pack.zip"), "download disposition is missing");
 
   const forbiddenOrigin = await fetch(`http://127.0.0.1:${port}/api/social-state`, {
     method: "PUT",

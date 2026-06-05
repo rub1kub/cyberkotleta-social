@@ -1,11 +1,12 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createServer } from "node:http";
-import { extname, join, resolve } from "node:path";
+import { basename, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   createSharedStateStore,
   createSocialStateHandler,
+  resolveDataPath,
   sendJson,
   sendText,
 } from "./shared-state-store.mjs";
@@ -15,6 +16,7 @@ import { handleMediaUpload, readMediaFile } from "./media-store.mjs";
 const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const distDir = resolve(process.env.KOTLETA_DIST_DIR ?? join(rootDir, "dist"));
 const assetsDir = resolve(distDir, "assets");
+const downloadsDir = resolve(process.env.KOTLETA_DOWNLOADS_DIR ?? resolveDataPath("downloads"));
 const host = process.env.HOST ?? "127.0.0.1";
 const port = Number(process.env.PORT ?? 4173);
 const store = createSharedStateStore();
@@ -69,6 +71,11 @@ const server = createServer(async (request, response) => {
 
   if (url.pathname.startsWith("/media/")) {
     await streamMedia(url.pathname, response);
+    return;
+  }
+
+  if (url.pathname.startsWith("/downloads/")) {
+    await streamDownload(request, url.pathname, response);
     return;
   }
 
@@ -135,6 +142,59 @@ async function streamFile(filePath, response, allowImmutableCache) {
   } catch {
     sendText(response, 404, "Not found");
   }
+}
+
+async function streamDownload(request, pathname, response) {
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    sendText(response, 405, "Method not allowed");
+    return;
+  }
+
+  const fileName = basename(pathname);
+  if (!fileName || fileName !== pathname.split("/").at(-1)) {
+    sendText(response, 404, "Not found");
+    return;
+  }
+
+  const filePath = resolve(downloadsDir, fileName);
+  if (!filePath.startsWith(downloadsDir)) {
+    sendText(response, 403, "Forbidden");
+    return;
+  }
+
+  const contentType = getDownloadContentType(filePath);
+  if (!contentType) {
+    sendText(response, 404, "Not found");
+    return;
+  }
+
+  try {
+    const info = await stat(filePath);
+    if (!info.isFile()) {
+      sendText(response, 404, "Not found");
+      return;
+    }
+
+    response.statusCode = 200;
+    response.setHeader("Content-Type", contentType);
+    response.setHeader("Content-Length", info.size);
+    response.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    response.setHeader("Cache-Control", "public, max-age=3600");
+    if (request.method === "HEAD") {
+      response.end();
+      return;
+    }
+    createReadStream(filePath).pipe(response);
+  } catch {
+    sendText(response, 404, "Not found");
+  }
+}
+
+function getDownloadContentType(filePath) {
+  const extension = extname(filePath).toLowerCase();
+  if (extension === ".zip") return "application/zip";
+  if (extension === ".mrpack") return "application/x-modrinth-modpack+zip";
+  return null;
 }
 
 async function streamMedia(pathname, response) {

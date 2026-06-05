@@ -50,7 +50,6 @@ import {
 } from "./auth";
 import type { DiscordSession } from "./auth";
 import { createMediaAttachment } from "./mediaUpload";
-import { downloadMrpack, downloadZipPack } from "./mrpack";
 import { readSharedSocialState, writeSharedSocialState } from "./sharedState";
 import { readSocialState, readTheme, socialStateStorageKey, writeSocialState, writeTheme } from "./storage";
 import type {
@@ -72,6 +71,8 @@ import type {
 const timeFormatter = new Intl.RelativeTimeFormat("ru", { numeric: "auto" });
 const maxFiles = 6;
 const cyberKotletaModpackName = "Модпак CyberKotleta";
+const cyberKotletaZipPath = "/downloads/cyberkotleta-whiteshield-modpack.zip";
+const cyberKotletaMrpackPath = "/downloads/cyberkotleta-whiteshield-modpack.mrpack";
 const confettiPieces = 22;
 const reactionPieces = 24;
 const maxReactionBursts = 2;
@@ -4214,8 +4215,6 @@ function CommunityBoardsPage({
 }
 
 function MinecraftUtility({ onBack, onCelebrate }: { onBack: () => void; onCelebrate: () => void }) {
-  const [exportingFormat, setExportingFormat] = useState<"zip" | "mrpack" | null>(null);
-  const [error, setError] = useState("");
   const minecraftWall: Wall = {
     id: "space:minecraft",
     siteSectionId: spaceSectionId,
@@ -4228,32 +4227,6 @@ function MinecraftUtility({ onBack, onCelebrate }: { onBack: () => void; onCeleb
     ...getWallAccentStyle(minecraftWall),
     "--field-board-height": "760px",
   } as CSSProperties;
-
-  async function exportPack(format: "zip" | "mrpack") {
-    const options = {
-      name: cyberKotletaModpackName,
-      summary: "мод пак для игры на WhiteShield",
-      gameVersion: "1.21.1",
-      loader: "fabric" as const,
-      loaderVersion: "0.16.14",
-      mods: [],
-    };
-
-    setExportingFormat(format);
-    setError("");
-    try {
-      if (format === "zip") {
-        await downloadZipPack(options);
-      } else {
-        await downloadMrpack(options);
-      }
-      onCelebrate();
-    } catch {
-      setError(format === "zip" ? "Не удалось скачать ZIP." : "Не удалось скачать .mrpack.");
-    } finally {
-      setExportingFormat(null);
-    }
-  }
 
   return (
     <section className="space-page field-page board-space-page minecraft-space-page" style={pageStyle}>
@@ -4311,26 +4284,30 @@ function MinecraftUtility({ onBack, onCelebrate }: { onBack: () => void; onCeleb
               </div>
 
               <div className="minecraft-download-options">
-                <button className="minecraft-download-option" disabled={Boolean(exportingFormat)} onClick={() => exportPack("zip")}>
-                  <span>
-                    {exportingFormat === "zip" ? <Loader2 size={16} className="spin" /> : <Download size={16} />}
-                  </span>
-                  <strong>ZIP архив</strong>
-                </button>
-                <button
-                  className="minecraft-download-option secondary"
-                  disabled={Boolean(exportingFormat)}
-                  onClick={() => exportPack("mrpack")}
+                <a
+                  className="minecraft-download-option"
+                  href={cyberKotletaZipPath}
+                  download="cyberkotleta-whiteshield-modpack.zip"
+                  onClick={onCelebrate}
                 >
                   <span>
-                    {exportingFormat === "mrpack" ? <Loader2 size={16} className="spin" /> : <PackagePlus size={16} />}
+                    <Download size={16} />
+                  </span>
+                  <strong>ZIP архив</strong>
+                </a>
+                <a
+                  className="minecraft-download-option secondary"
+                  href={cyberKotletaMrpackPath}
+                  download="cyberkotleta-whiteshield-modpack.mrpack"
+                  onClick={onCelebrate}
+                >
+                  <span>
+                    <PackagePlus size={16} />
                   </span>
                   <strong>.mrpack</strong>
                   <small>Modrinth APP</small>
-                </button>
+                </a>
               </div>
-
-              {error ? <div className="minecraft-download-error">{error}</div> : null}
             </article>
           </div>
         </div>

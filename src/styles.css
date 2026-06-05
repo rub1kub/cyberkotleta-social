@@ -825,6 +825,7 @@ button:disabled {
   color: #07130e;
   padding: 14px;
   text-align: left;
+  text-decoration: none;
   transition:
     transform 0.18s var(--ease-out),
     filter 0.18s ease;

@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { basename, dirname, extname, resolve } from "node:path";
 import { initialState } from "./src/data";
@@ -14,6 +15,7 @@ type SharedStatePayload = {
 
 const sharedStateFile = resolve(".local/social-state.json");
 const mediaDir = resolve(".local/media");
+const downloadsDir = resolve(".local/downloads");
 const maxRequestBodyBytes = 6 * 1024 * 1024;
 const maxMediaPayloadBytes = 24 * 1024 * 1024;
 const allowedMediaTypes = new Map([
@@ -154,6 +156,13 @@ function findMediaContentType(pathname: string): string | null {
   return null;
 }
 
+function findDownloadContentType(pathname: string): string | null {
+  const extension = extname(pathname).toLowerCase();
+  if (extension === ".zip") return "application/zip";
+  if (extension === ".mrpack") return "application/x-modrinth-modpack+zip";
+  return null;
+}
+
 export default defineConfig({
   plugins: [
     react(),
@@ -208,6 +217,54 @@ export default defineConfig({
             response.setHeader("Content-Type", contentType);
             response.setHeader("Cache-Control", "public, max-age=86400");
             response.end(bytes);
+          } catch {
+            response.statusCode = 404;
+            response.end("Not found");
+          }
+        });
+
+        server.middlewares.use("/downloads/", async (request, response) => {
+          try {
+            if (request.method !== "GET" && request.method !== "HEAD") {
+              response.statusCode = 405;
+              response.setHeader("Allow", "GET, HEAD");
+              response.end("Method not allowed");
+              return;
+            }
+
+            const url = new URL(request.url ?? "/", "http://127.0.0.1");
+            const fileName = basename(url.pathname);
+            const contentType = findDownloadContentType(fileName);
+            if (!fileName || !contentType) {
+              response.statusCode = 404;
+              response.end("Not found");
+              return;
+            }
+
+            const filePath = resolve(downloadsDir, fileName);
+            if (!filePath.startsWith(downloadsDir)) {
+              response.statusCode = 403;
+              response.end("Forbidden");
+              return;
+            }
+
+            const info = await stat(filePath);
+            if (!info.isFile()) {
+              response.statusCode = 404;
+              response.end("Not found");
+              return;
+            }
+
+            response.statusCode = 200;
+            response.setHeader("Content-Type", contentType);
+            response.setHeader("Content-Length", info.size);
+            response.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+            response.setHeader("Cache-Control", "public, max-age=3600");
+            if (request.method === "HEAD") {
+              response.end();
+              return;
+            }
+            createReadStream(filePath).pipe(response);
           } catch {
             response.statusCode = 404;
             response.end("Not found");
