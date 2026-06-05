@@ -5449,6 +5449,10 @@ button:focus-visible {
   --field-board-safe-top: 384px;
 }
 
+.minecraft-space-page {
+  --field-board-safe-top: 0px;
+}
+
 .profile-board-page .profile-wall-cover {
   align-items: end;
 }
