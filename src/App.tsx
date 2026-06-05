@@ -73,6 +73,7 @@ const maxFiles = 6;
 const cyberKotletaModpackName = "Модпак CyberKotleta";
 const cyberKotletaZipPath = "/downloads/cyberkotleta-whiteshield-modpack.zip";
 const cyberKotletaMrpackPath = "/downloads/cyberkotleta-whiteshield-modpack.mrpack";
+const minecraftDownloadPositionKey = "kotleta.minecraft.download.position.v1";
 const confettiPieces = 22;
 const reactionPieces = 24;
 const maxReactionBursts = 2;
@@ -4215,6 +4216,14 @@ function CommunityBoardsPage({
 }
 
 function MinecraftUtility({ onBack, onCelebrate }: { onBack: () => void; onCelebrate: () => void }) {
+  const [downloadPosition, setDownloadPosition] = useState<PostPosition>(() => readMinecraftDownloadPosition());
+  const [downloadDrag, setDownloadDrag] = useState<{
+    origin: PostPosition;
+    pointerX: number;
+    pointerY: number;
+  } | null>(null);
+  const [downloadPreviewPosition, setDownloadPreviewPosition] = useState<PostPosition | null>(null);
+  const downloadPreviewPositionRef = useRef<PostPosition | null>(null);
   const minecraftWall: Wall = {
     id: "space:minecraft",
     siteSectionId: spaceSectionId,
@@ -4227,6 +4236,58 @@ function MinecraftUtility({ onBack, onCelebrate }: { onBack: () => void; onCeleb
     ...getWallAccentStyle(minecraftWall),
     "--field-board-height": "760px",
   } as CSSProperties;
+  const currentDownloadPosition = downloadDrag && downloadPreviewPosition ? downloadPreviewPosition : downloadPosition;
+
+  useEffect(() => {
+    if (!downloadDrag) return;
+    const activeDrag = downloadDrag;
+
+    function handlePointerMove(event: PointerEvent) {
+      const nextPosition = clampPostPosition({
+        x: activeDrag.origin.x + event.clientX - activeDrag.pointerX,
+        y: activeDrag.origin.y + event.clientY - activeDrag.pointerY,
+      }, getMinecraftDownloadMaxX());
+      downloadPreviewPositionRef.current = nextPosition;
+      setDownloadPreviewPosition(nextPosition);
+    }
+
+    function handlePointerUp() {
+      const finalPosition = downloadPreviewPositionRef.current;
+      if (finalPosition) {
+        setDownloadPosition(finalPosition);
+        writeMinecraftDownloadPosition(finalPosition);
+      }
+      setDownloadDrag(null);
+      downloadPreviewPositionRef.current = null;
+      setDownloadPreviewPosition(null);
+    }
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp, { once: true });
+    window.addEventListener("pointercancel", handlePointerUp, { once: true });
+
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
+    };
+  }, [downloadDrag]);
+
+  function startDownloadDrag(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0 || isDragIgnored(event.target)) return;
+    if (window.innerWidth < 760) return;
+
+    event.preventDefault();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    const nextPosition = clampPostPosition(downloadPosition, getMinecraftDownloadMaxX());
+    setDownloadDrag({
+      origin: nextPosition,
+      pointerX: event.clientX,
+      pointerY: event.clientY,
+    });
+    downloadPreviewPositionRef.current = nextPosition;
+    setDownloadPreviewPosition(nextPosition);
+  }
 
   return (
     <section className="space-page field-page board-space-page minecraft-space-page" style={pageStyle}>
@@ -4266,9 +4327,16 @@ function MinecraftUtility({ onBack, onCelebrate }: { onBack: () => void; onCeleb
         </div>
         <div className="wall-board-canvas">
           <div
-            className="wall-board-item minecraft-download-item"
-            style={{ "--board-x": "calc(var(--board-left-offset, 0px) + 24px)", "--board-y": "44px" } as CSSProperties}
+            className={downloadDrag ? "wall-board-item minecraft-download-item dragging" : "wall-board-item minecraft-download-item"}
+            onPointerDown={startDownloadDrag}
+            style={
+              {
+                "--board-x": `${currentDownloadPosition.x}px`,
+                "--board-y": `${currentDownloadPosition.y}px`,
+              } as CSSProperties
+            }
           >
+            <span className="board-drag-handle" data-drag-handle title="Перетащить карточку" aria-hidden="true" />
             <article className="post-card board-card minecraft-download-post">
               <header className="minecraft-post-head">
                 <span className="minecraft-post-mark">
@@ -4905,6 +4973,42 @@ function isDragIgnored(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
   if (target.closest("[data-drag-handle]")) return false;
   return Boolean(target.closest("button, a, input, textarea, select, audio, video, [data-no-drag]"));
+}
+
+function readMinecraftDownloadPosition(): PostPosition {
+  const fallback = getDefaultMinecraftDownloadPosition();
+  if (typeof window === "undefined") return fallback;
+
+  try {
+    const raw = localStorage.getItem(minecraftDownloadPositionKey);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw) as Partial<PostPosition>;
+    const x = Number(parsed.x);
+    const y = Number(parsed.y);
+    return clampPostPosition({
+      x: Number.isFinite(x) ? x : fallback.x,
+      y: Number.isFinite(y) ? y : fallback.y,
+    }, getMinecraftDownloadMaxX());
+  } catch {
+    return fallback;
+  }
+}
+
+function writeMinecraftDownloadPosition(position: PostPosition): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(minecraftDownloadPositionKey, JSON.stringify(position));
+}
+
+function getDefaultMinecraftDownloadPosition(): PostPosition {
+  if (typeof window !== "undefined" && window.innerWidth < 900) {
+    return { x: 24, y: 44 };
+  }
+  return { x: 274, y: 44 };
+}
+
+function getMinecraftDownloadMaxX(): number {
+  if (typeof window === "undefined") return 1800;
+  return Math.max(0, window.innerWidth - 520 - boardGap);
 }
 
 function formatWallChannelName(wall: Wall): string {
