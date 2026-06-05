@@ -162,6 +162,7 @@ export function discordSessionToProfile(
     name: displayName,
     handle: `@${session.user.username}`,
     bio: existing?.bio ?? "",
+    status: existing?.status ?? "Онлайн",
     joinedAt: existing?.joinedAt ?? Date.now(),
     timeOnSiteMinutes: existing?.timeOnSiteMinutes ?? 0,
     avatarUrl: getDiscordAvatarUrl(session.user),

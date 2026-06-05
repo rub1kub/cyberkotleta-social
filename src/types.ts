@@ -22,6 +22,7 @@ export type UserProfile = {
   name: string;
   handle: string;
   bio: string;
+  status?: string;
   joinedAt: number;
   timeOnSiteMinutes: number;
   avatarUrl?: string;

@@ -74,9 +74,15 @@ const cyberKotletaModpackName = "Модпак CyberKotleta";
 const cyberKotletaZipPath = "/downloads/cyberkotleta-whiteshield-modpack.zip";
 const cyberKotletaMrpackPath = "/downloads/cyberkotleta-whiteshield-modpack.mrpack";
 const minecraftWallId = "space:minecraft";
+const minecraftDownloadPostId = "minecraft-download-post";
 const minecraftDownloadObjectId = "minecraft:download-card";
 const minecraftOwnerUserId = "rub1kub";
 const minecraftOwnerDiscordUserId = "discord:1129003754818125915";
+const minecraftAdminUserIds = new Set([
+  minecraftOwnerUserId,
+  minecraftOwnerDiscordUserId,
+  "discord:476391268671291393",
+]);
 const confettiPieces = 22;
 const reactionPieces = 24;
 const maxReactionBursts = 2;
@@ -165,11 +171,17 @@ type PixelSyncMessage = {
   type: "pixel";
 };
 
+type BoardRect = {
+  height: number;
+  width: number;
+  x: number;
+  y: number;
+};
+
 type AppRoute =
   | { view: "feed" }
   | { view: "top" }
   | { view: "spaceHub" }
-  | { view: "spaceMinecraft" }
   | { view: "spaceBoards" }
   | { view: "profile"; profileId: string }
   | { view: "space"; spaceId: string }
@@ -283,14 +295,11 @@ function App() {
   const activePost = route.view === "post" ? postById.get(route.postId) : undefined;
   const settingsWall = settingsWallId ? wallById.get(settingsWallId) : undefined;
   const activeProfileWall = activeProfile ? wallById.get(getProfileWallId(activeProfile.id)) : undefined;
-  const minecraftWall = wallById.get(minecraftWallId) ?? createMinecraftWall();
   const activePaletteWall =
     route.view === "space"
       ? activeSpace
       : route.view === "profile"
         ? activeProfileWall
-        : route.view === "spaceMinecraft"
-          ? minecraftWall
         : route.view === "post" && activePost
           ? wallById.get(activePost.wallId)
           : undefined;
@@ -299,7 +308,7 @@ function App() {
     const normalizedQuery = query.trim().toLowerCase();
     if (!normalizedQuery) return [];
     return state.users
-      .filter((user) => `${user.name} ${user.handle} ${user.bio}`.toLowerCase().includes(normalizedQuery))
+      .filter((user) => `${user.name} ${user.handle} ${user.bio} ${getUserStatus(user)}`.toLowerCase().includes(normalizedQuery))
       .slice(0, 4);
   }, [query, state.users]);
   const matchingSpaces = useMemo(() => {
@@ -346,10 +355,6 @@ function App() {
   ]);
 
   const composerTargetWallId = getComposerTargetWallId(route, activeUser);
-  const minecraftDownloadPosition =
-    state.utilityPositions[minecraftDownloadObjectId] ?? getDefaultMinecraftDownloadPosition();
-  const canManageMinecraft = activeUser ? canManageWall(minecraftWall, activeUser.id) : false;
-
   const applySharedWriteResult = useCallback((snapshot: Awaited<ReturnType<typeof writeSharedSocialState>>) => {
     if (!snapshot) return;
 
@@ -536,6 +541,13 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const canonicalPath = routeToPath(route, userById, state.walls);
+    if (window.location.pathname === "/space/minecraft" && canonicalPath !== window.location.pathname) {
+      window.history.replaceState(null, "", canonicalPath);
+    }
+  }, [route, state.walls, userById]);
+
+  useEffect(() => {
     const interval = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
       setState((current) => ({
@@ -684,19 +696,6 @@ function App() {
             }
           : post,
       ),
-    }));
-  }
-
-  function moveMinecraftDownload(x: number, y: number) {
-    setState((current) => ({
-      ...current,
-      utilityPositions: {
-        ...current.utilityPositions,
-        [minecraftDownloadObjectId]: clampPostPosition({
-          x: Math.round(x / boardGridSize) * boardGridSize,
-          y: Math.round(y / boardGridSize) * boardGridSize,
-        }, getMinecraftDownloadMaxX()),
-      },
     }));
   }
 
@@ -1146,29 +1145,28 @@ function App() {
         </section>
 
         {activeUser ? (
-          <button className="current-user" onClick={() => openProfile(activeUser.id)}>
-            <Avatar user={activeUser} />
-            <span>
-              <strong>{activeUser.name}</strong>
-            </span>
-          </button>
+          <div className={isDiscordUser ? "current-user-card with-logout" : "current-user-card"}>
+            <button className="current-user" onClick={() => openProfile(activeUser.id)}>
+              <Avatar user={activeUser} />
+              <span>
+                <strong>{activeUser.name}</strong>
+                <small>{getUserStatus(activeUser)}</small>
+              </span>
+            </button>
+            {isDiscordUser ? (
+              <button className="user-logout" onClick={logoutDiscord} aria-label="Завершить сеанс Дискорда" title="Завершить сеанс">
+                <LogOut size={15} />
+              </button>
+            ) : null}
+          </div>
         ) : null}
 
         {!isDiscordUser ? (
           <AuthControls
             error={authError}
-            isDiscordUser={false}
             onLogin={startDiscordAuth}
-            onLogout={logoutDiscord}
           />
-        ) : (
-          <AuthControls
-            error={authError}
-            isDiscordUser
-            onLogin={startDiscordAuth}
-            onLogout={logoutDiscord}
-          />
-        )}
+        ) : null}
 
         {activeUser ? (
           <NotificationCenter
@@ -1267,19 +1265,7 @@ function App() {
         {route.view === "spaceHub" ? (
           <CommunitySpacePage
             onOpenBoards={() => navigate({ view: "spaceBoards" })}
-            onOpenMinecraft={() => navigate({ view: "spaceMinecraft" })}
-          />
-        ) : null}
-
-        {route.view === "spaceMinecraft" ? (
-          <MinecraftUtility
-            canManage={canManageMinecraft}
-            position={minecraftDownloadPosition}
-            wall={minecraftWall}
-            onBack={() => navigate({ view: "spaceHub" })}
-            onCelebrate={() => celebrate("pack")}
-            onMovePosition={moveMinecraftDownload}
-            onOpenSettings={() => openWallSettings(minecraftWallId)}
+            onOpenMinecraft={() => navigate({ view: "space", spaceId: minecraftWallId })}
           />
         ) : null}
 
@@ -1442,28 +1428,17 @@ function App() {
 
 function AuthControls({
   error,
-  isDiscordUser,
   onLogin,
-  onLogout,
 }: {
   error: string;
-  isDiscordUser: boolean;
   onLogin: () => void;
-  onLogout: () => void;
 }) {
   return (
     <div className="auth-controls">
-      {isDiscordUser ? (
-        <button className="discord-button secondary" onClick={onLogout}>
-          <LogOut size={15} />
-          Выйти
-        </button>
-      ) : (
-        <button className="discord-button" onClick={onLogin}>
-          <LogIn size={15} />
-          Войти через Дискорд
-        </button>
-      )}
+      <button className="discord-button" onClick={onLogin}>
+        <LogIn size={15} />
+        Войти через Дискорд
+      </button>
       {error ? <span className="auth-error">{error}</span> : null}
     </div>
   );
@@ -1888,33 +1863,7 @@ function FeedPage({
         onToggleSave={onToggleSave}
       />
 
-      <FieldMiniMap posts={posts} />
     </section>
-  );
-}
-
-function FieldMiniMap({ posts }: { posts: Post[] }) {
-  const postLayout = resolveBoardPostLayout(posts);
-  const maxX = Math.max(1, ...postLayout.map(({ position }) => position.x + boardCardWidth));
-  const maxY = Math.max(1, ...postLayout.map(({ position }) => position.y + boardCardHeight));
-
-  return (
-    <aside className="field-minimap" aria-label="Карта поля">
-      <span>Карта</span>
-      <div>
-        {postLayout.map(({ post, position }) => (
-          <i
-            key={post.id}
-            style={
-              {
-                "--map-x": `${Math.min(92, Math.max(4, (position.x / maxX) * 100))}%`,
-                "--map-y": `${Math.min(86, Math.max(8, (position.y / maxY) * 100))}%`,
-              } as CSSProperties
-            }
-          />
-        ))}
-      </div>
-    </aside>
   );
 }
 
@@ -2060,18 +2009,23 @@ function WallBoard({
   const boardRef = useRef<HTMLElement | null>(null);
   const [boardWidth, setBoardWidth] = useState(0);
   const [boardDefaultX, setBoardDefaultX] = useState(0);
+  const [protectedRects, setProtectedRects] = useState<BoardRect[]>([]);
+  const protectedRectsRef = useRef<BoardRect[]>([]);
   const [previewPosition, setPreviewPosition] = useState<PostPosition | null>(null);
   const previewPositionRef = useRef<PostPosition | null>(null);
   const boardClassNames = className?.split(" ") ?? [];
   const isFieldBoard = boardClassNames.includes("field-board");
-  const hasFloatingMiniMap = boardClassNames.includes("space-field-board");
-  const boardRightReserve = hasFloatingMiniMap ? 230 : isFieldBoard ? 96 : 0;
+  const boardRightReserve = 0;
   const boardMaxX = isFieldBoard && boardWidth > 0
     ? Math.max(0, boardWidth - boardCardWidth - boardGap - boardRightReserve)
     : 1800;
-  const postLayout = useMemo(
+  const basePostLayout = useMemo(
     () => resolveBoardPostLayout(posts, boardMaxX, boardDefaultX),
     [boardDefaultX, boardMaxX, posts],
+  );
+  const postLayout = useMemo(
+    () => isFieldBoard ? resolveSafeBoardLayout(basePostLayout, protectedRects, boardMaxX) : basePostLayout,
+    [basePostLayout, boardMaxX, isFieldBoard, protectedRects],
   );
   const boardHeight = Math.max(
     720,
@@ -2093,8 +2047,11 @@ function WallBoard({
         : 0;
       const topChromeReserve = isFieldBoard ? Math.max(420, searchReserve) : 0;
       const maxDefaultX = Math.max(0, nextBoardWidth - boardCardWidth - boardGap - boardRightReserve);
+      const nextProtectedRects = getFieldProtectedRects(node);
+      protectedRectsRef.current = nextProtectedRects;
       setBoardWidth(Math.round(boardRect.width));
       setBoardDefaultX(Math.min(maxDefaultX, defaultStartX + topChromeReserve));
+      setProtectedRects(nextProtectedRects);
     };
     updateWidth();
 
@@ -2113,10 +2070,13 @@ function WallBoard({
     const activeDrag = drag;
 
     function handlePointerMove(event: PointerEvent) {
-      const nextPosition = clampPostPosition({
+      const rawPosition = clampPostPosition({
         x: activeDrag.origin.x + event.clientX - activeDrag.pointerX,
         y: activeDrag.origin.y + event.clientY - activeDrag.pointerY,
       }, boardMaxX);
+      const nextPosition = isFieldBoard
+        ? resolveSafeBoardPosition(rawPosition, protectedRectsRef.current, [], boardMaxX)
+        : rawPosition;
       previewPositionRef.current = nextPosition;
       setPreviewPosition(nextPosition);
     }
@@ -2140,7 +2100,7 @@ function WallBoard({
       window.removeEventListener("pointerup", handlePointerUp);
       window.removeEventListener("pointercancel", handlePointerUp);
     };
-  }, [boardMaxX, drag, onMovePost]);
+  }, [boardMaxX, drag, isFieldBoard, onMovePost]);
 
   function startDrag(event: React.PointerEvent<HTMLDivElement>, postId: string, position: PostPosition) {
     if (event.button !== 0 || isDragIgnored(event.target)) return;
@@ -2413,7 +2373,6 @@ function SpacePage({
         onRepost={onRepost}
         onToggleSave={onToggleSave}
       />
-      <FieldMiniMap posts={posts} />
     </section>
   );
 }
@@ -3110,6 +3069,7 @@ function PostCard({
   const repostAuthor = repostedPost ? userById.get(repostedPost.authorId) : undefined;
   const placeLabel = getWallDisplayName(wall, userById);
   const fieldObjectKind = objectKind ?? getPostObjectKind(post, commentCount);
+  const isMinecraftDownload = post.id === minecraftDownloadPostId && post.wallId === minecraftWallId;
 
   useEffect(() => {
     return () => {
@@ -3273,6 +3233,49 @@ function PostCard({
     reacting ? "reaction-wake" : "",
     isMenuOpen ? "menu-open" : "",
   ].filter(Boolean).join(" ");
+
+  if (isMinecraftDownload) {
+    return (
+      <article ref={articleRef} className={`${cardClassName} minecraft-download-post`}>
+        <header className="minecraft-post-head">
+          <span className="minecraft-post-mark">
+            <PackagePlus size={22} />
+          </span>
+          <div>
+            <span>Minecraft 1.21.1 · Fabric</span>
+          </div>
+        </header>
+
+        <div className="minecraft-post-copy">
+          <p>мод пак для игры на WhiteShield</p>
+        </div>
+
+        <div className="minecraft-download-options">
+          <a
+            className="minecraft-download-option"
+            href={cyberKotletaZipPath}
+            download="cyberkotleta-whiteshield-modpack.zip"
+          >
+            <span>
+              <Download size={16} />
+            </span>
+            <strong>ZIP архив</strong>
+          </a>
+          <a
+            className="minecraft-download-option secondary"
+            href={cyberKotletaMrpackPath}
+            download="cyberkotleta-whiteshield-modpack.mrpack"
+          >
+            <span>
+              <PackagePlus size={16} />
+            </span>
+            <strong>.mrpack</strong>
+            <small>Modrinth APP</small>
+          </a>
+        </div>
+      </article>
+    );
+  }
 
   return (
     <article ref={articleRef} className={cardClassName}>
@@ -4115,6 +4118,7 @@ function ProfilePage({
             <div>
               <h1>{user.name}</h1>
               <p>{user.handle}</p>
+              <small className="profile-status">{getUserStatus(user)}</small>
             </div>
           </div>
           {(profileWall?.description || user.bio) ? <p>{profileWall?.description || user.bio}</p> : null}
@@ -4177,7 +4181,6 @@ function ProfilePage({
         onRepost={onRepost}
         onToggleSave={onToggleSave}
       />
-      <FieldMiniMap posts={userPosts} />
     </section>
   );
 }
@@ -4242,188 +4245,6 @@ function CommunityBoardsPage({
           </button>
         ))}
       </div>
-    </section>
-  );
-}
-
-function MinecraftUtility({
-  canManage,
-  position,
-  wall,
-  onBack,
-  onCelebrate,
-  onMovePosition,
-  onOpenSettings,
-}: {
-  canManage: boolean;
-  position: PostPosition;
-  wall: Wall;
-  onBack: () => void;
-  onCelebrate: () => void;
-  onMovePosition: (x: number, y: number) => void;
-  onOpenSettings: () => void;
-}) {
-  const [downloadDrag, setDownloadDrag] = useState<{
-    origin: PostPosition;
-    pointerX: number;
-    pointerY: number;
-  } | null>(null);
-  const [downloadPreviewPosition, setDownloadPreviewPosition] = useState<PostPosition | null>(null);
-  const downloadPreviewPositionRef = useRef<PostPosition | null>(null);
-  const pageStyle = {
-    ...getWallAccentStyle(wall),
-    "--field-board-height": "760px",
-  } as CSSProperties;
-  const currentDownloadPosition = downloadDrag && downloadPreviewPosition ? downloadPreviewPosition : position;
-
-  useEffect(() => {
-    if (!downloadDrag) return;
-    const activeDrag = downloadDrag;
-
-    function handlePointerMove(event: PointerEvent) {
-      const nextPosition = clampPostPosition({
-        x: activeDrag.origin.x + event.clientX - activeDrag.pointerX,
-        y: activeDrag.origin.y + event.clientY - activeDrag.pointerY,
-      }, getMinecraftDownloadMaxX());
-      downloadPreviewPositionRef.current = nextPosition;
-      setDownloadPreviewPosition(nextPosition);
-    }
-
-    function handlePointerUp() {
-      const finalPosition = downloadPreviewPositionRef.current;
-      if (finalPosition) {
-        onMovePosition(finalPosition.x, finalPosition.y);
-      }
-      setDownloadDrag(null);
-      downloadPreviewPositionRef.current = null;
-      setDownloadPreviewPosition(null);
-    }
-
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp, { once: true });
-    window.addEventListener("pointercancel", handlePointerUp, { once: true });
-
-    return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
-      window.removeEventListener("pointercancel", handlePointerUp);
-    };
-  }, [downloadDrag, onMovePosition]);
-
-  function startDownloadDrag(event: React.PointerEvent<HTMLDivElement>) {
-    if (!canManage) return;
-    if (event.button !== 0 || isDragIgnored(event.target)) return;
-    if (window.innerWidth < 760) return;
-
-    event.preventDefault();
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-    const nextPosition = clampPostPosition(position, getMinecraftDownloadMaxX());
-    setDownloadDrag({
-      origin: nextPosition,
-      pointerX: event.clientX,
-      pointerY: event.clientY,
-    });
-    downloadPreviewPositionRef.current = nextPosition;
-    setDownloadPreviewPosition(nextPosition);
-  }
-
-  return (
-    <section className="space-page field-page board-space-page minecraft-space-page" style={pageStyle}>
-      <div className="profile-cover space-cover wall-cover field-wall-cover minecraft-wall-cover" style={getWallCoverStyle(wall)}>
-        <span className="space-kicker">Доска</span>
-        <div className="space-copy">
-          <div className="wall-title-row">
-            <WallAvatar fallback={wall.name} wall={wall} />
-            <div>
-              <h1>
-                <ChannelName wall={wall} size="hero" />
-              </h1>
-            </div>
-          </div>
-          {wall.description ? <p>{wall.description}</p> : null}
-          <WallActionLinks buttons={wall.actionButtons ?? []} />
-        </div>
-
-        <div className="space-actions">
-          <div className="space-stat-row">
-            <MiniMetric label="Заметки" value="1" />
-            <MiniMetric label="Сервер" value="WhiteShield" />
-            <MiniMetric label="Версия" value="1.21.1" />
-          </div>
-          <div className={canManage ? "space-action-row" : "space-action-row single"}>
-            <button className="follow-button" onClick={onBack}>
-              <ArrowLeft size={15} />
-              Назад
-            </button>
-            {canManage ? (
-              <button className="wall-settings-button" onClick={onOpenSettings} aria-label="Настройки доски">
-                <Settings size={16} />
-              </button>
-            ) : null}
-          </div>
-        </div>
-      </div>
-
-      <section className="wall-board field-board minecraft-field-board" aria-label="Доска модпака">
-        <div className="wall-board-head">
-          <span>Доска</span>
-          <small>скачай модпак</small>
-        </div>
-        <div className="wall-board-canvas">
-          <div
-            className={downloadDrag ? "wall-board-item minecraft-download-item dragging" : "wall-board-item minecraft-download-item"}
-            onPointerDown={canManage ? startDownloadDrag : undefined}
-            style={
-              {
-                "--board-x": `${currentDownloadPosition.x}px`,
-                "--board-y": `${currentDownloadPosition.y}px`,
-              } as CSSProperties
-            }
-          >
-            {canManage ? <span className="board-drag-handle" data-drag-handle title="Перетащить карточку" aria-hidden="true" /> : null}
-            <article className="post-card board-card minecraft-download-post">
-              <header className="minecraft-post-head">
-                <span className="minecraft-post-mark">
-                  <PackagePlus size={22} />
-                </span>
-                <div>
-                  <span>Minecraft 1.21.1 · Fabric</span>
-                </div>
-              </header>
-
-              <div className="minecraft-post-copy">
-                <p>мод пак для игры на WhiteShield</p>
-              </div>
-
-              <div className="minecraft-download-options">
-                <a
-                  className="minecraft-download-option"
-                  href={cyberKotletaZipPath}
-                  download="cyberkotleta-whiteshield-modpack.zip"
-                  onClick={onCelebrate}
-                >
-                  <span>
-                    <Download size={16} />
-                  </span>
-                  <strong>ZIP архив</strong>
-                </a>
-                <a
-                  className="minecraft-download-option secondary"
-                  href={cyberKotletaMrpackPath}
-                  download="cyberkotleta-whiteshield-modpack.mrpack"
-                  onClick={onCelebrate}
-                >
-                  <span>
-                    <PackagePlus size={16} />
-                  </span>
-                  <strong>.mrpack</strong>
-                  <small>Modrinth APP</small>
-                </a>
-              </div>
-            </article>
-          </div>
-        </div>
-      </section>
     </section>
   );
 }
@@ -4731,6 +4552,7 @@ function createGuestUser(): UserProfile {
     name: "Гость",
     handle: "@guest",
     bio: "Пишет без привязки к Discord.",
+    status: "Онлайн",
     joinedAt: Date.now(),
     timeOnSiteMinutes: 0,
   };
@@ -4814,6 +4636,11 @@ function formatMinutes(minutes: number): string {
   return rest ? `${hours}ч ${rest}м` : `${hours}ч`;
 }
 
+function getUserStatus(user: UserProfile | undefined): string {
+  const status = user?.status?.trim();
+  return status || "Онлайн";
+}
+
 function formatCompactNumber(value: number): string {
   return new Intl.NumberFormat("ru", {
     notation: value >= 1000 ? "compact" : "standard",
@@ -4829,9 +4656,10 @@ function normalizeRuntimeBoardCopy(current: SocialState): SocialState {
   let changed = false;
   const users = current.users.map((user) => {
     const bio = normalizeBoardCopyText(user.bio);
-    if (bio === user.bio) return user;
+    const status = user.status?.trim() || "Онлайн";
+    if (bio === user.bio && status === user.status) return user;
     changed = true;
-    return { ...user, bio };
+    return { ...user, bio, status };
   });
   const walls = current.walls.map((wall) => {
     const description = normalizeBoardCopyText(wall.description ?? "");
@@ -4842,12 +4670,14 @@ function normalizeRuntimeBoardCopy(current: SocialState): SocialState {
   });
   const wallsWithMinecraft = ensureMinecraftWallExists(walls);
   if (wallsWithMinecraft !== walls) changed = true;
-  const posts = current.posts.map((post) => {
+  const normalizedPosts = current.posts.map((post) => {
     const text = normalizeBoardCopyText(post.text);
     if (text === post.text) return post;
     changed = true;
     return { ...post, text };
   });
+  const posts = ensureMinecraftDownloadPost(normalizedPosts, current.utilityPositions, current.users);
+  if (posts !== normalizedPosts) changed = true;
   const utilityPositions = current.utilityPositions[minecraftDownloadObjectId]
     ? current.utilityPositions
     : {
@@ -4866,6 +4696,56 @@ function normalizeBoardCopyText(text: string): string {
     .replaceAll("Заметка на стене", "Заметка на доске")
     .replaceAll("Пост на стене", "Заметка на доске")
     .replaceAll("Профильная стена", "Профильная доска");
+}
+
+function ensureMinecraftDownloadPost(
+  posts: Post[],
+  utilityPositions: SocialState["utilityPositions"],
+  users: UserProfile[],
+): Post[] {
+  const position = utilityPositions[minecraftDownloadObjectId] ?? getDefaultMinecraftDownloadPosition();
+  const authorId = users.some((user) => user.id === minecraftOwnerUserId) ? minecraftOwnerUserId : guestUserId;
+  const existing = posts.find((post) => post.id === minecraftDownloadPostId);
+
+  if (existing) {
+    let changed = false;
+    const nextPosts = posts.map((post) => {
+      if (post.id !== minecraftDownloadPostId) return post;
+
+      const nextPost: Post = {
+        ...post,
+        wallId: minecraftWallId,
+        authorId: users.some((user) => user.id === post.authorId) ? post.authorId : authorId,
+        text: "мод пак для игры на WhiteShield",
+        position: post.position ?? position,
+      };
+      changed ||= nextPost.wallId !== post.wallId ||
+        nextPost.authorId !== post.authorId ||
+        nextPost.text !== post.text ||
+        nextPost.position !== post.position;
+      return nextPost;
+    });
+
+    return changed ? nextPosts : posts;
+  }
+
+  return [
+    {
+      id: minecraftDownloadPostId,
+      wallId: minecraftWallId,
+      authorId,
+      text: "мод пак для игры на WhiteShield",
+      attachments: [],
+      reactions: 0,
+      views: {
+        total: 0,
+        uniqueUserIds: [],
+      },
+      position,
+      createdAt: Date.now() - 60000,
+    },
+    ...posts,
+  ];
 }
 
 function isPixelSyncMessage(value: unknown): value is PixelSyncMessage {
@@ -4973,6 +4853,112 @@ function resolveBoardPostLayout(posts: Post[], maxX = 1800, defaultOffsetX = 0):
   });
 }
 
+function resolveSafeBoardLayout(
+  layout: Array<{ post: Post; position: PostPosition }>,
+  protectedRects: BoardRect[],
+  maxX = 1800,
+): Array<{ post: Post; position: PostPosition }> {
+  if (protectedRects.length === 0) return layout;
+
+  const placed: PostPosition[] = [];
+  return layout.map(({ post, position }) => {
+    const safePosition = resolveSafeBoardPosition(position, protectedRects, placed, maxX);
+    placed.push(safePosition);
+    return { post, position: safePosition };
+  });
+}
+
+function resolveSafeBoardPosition(
+  position: PostPosition,
+  protectedRects: BoardRect[],
+  placed: PostPosition[] = [],
+  maxX = 1800,
+): PostPosition {
+  let candidate = clampPostPosition(position, maxX);
+
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    const blocker = findBoardPositionBlocker(candidate, protectedRects, placed);
+    if (!blocker) return candidate;
+
+    const variants = [
+      { x: blocker.x + blocker.width, y: candidate.y },
+      { x: candidate.x, y: blocker.y + blocker.height },
+      { x: blocker.x + blocker.width, y: blocker.y + blocker.height },
+    ]
+      .map((item) => clampPostPosition(item, maxX))
+      .sort((a, b) => getPositionDistance(position, a) - getPositionDistance(position, b));
+
+    candidate = variants.find((item) => !doesBoardRectOverlap(postPositionToRect(item), blocker)) ?? variants[0];
+  }
+
+  return candidate;
+}
+
+function findBoardPositionBlocker(
+  position: PostPosition,
+  protectedRects: BoardRect[],
+  placed: PostPosition[],
+): BoardRect | undefined {
+  const rect = postPositionToRect(position);
+  const protectedBlocker = protectedRects.find((item) => doesBoardRectOverlap(rect, item));
+  if (protectedBlocker) return protectedBlocker;
+
+  const placedPosition = placed.find((item) => hasBoardPositionOverlap(position, [item]));
+  return placedPosition ? postPositionToRect(placedPosition) : undefined;
+}
+
+function postPositionToRect(position: PostPosition): BoardRect {
+  return {
+    x: position.x,
+    y: position.y,
+    width: boardCardWidth,
+    height: boardCardHeight,
+  };
+}
+
+function doesBoardRectOverlap(a: BoardRect, b: BoardRect): boolean {
+  return a.x < b.x + b.width &&
+    a.x + a.width > b.x &&
+    a.y < b.y + b.height &&
+    a.y + a.height > b.y;
+}
+
+function getPositionDistance(origin: PostPosition, candidate: PostPosition): number {
+  return Math.abs(origin.x - candidate.x) + Math.abs(origin.y - candidate.y);
+}
+
+function getFieldProtectedRects(board: HTMLElement): BoardRect[] {
+  const boardRect = board.getBoundingClientRect();
+  const selectors = [
+    ".site-panel",
+    ".topbar",
+    ".field-command",
+    ".field-filterbar",
+    ".field-toolbelt",
+    ".field-create-popover",
+    ".board-directory",
+    ".field-wall-cover",
+    ".board-composer",
+    ".profile-bio",
+    ".mobile-tabbar",
+    ".mobile-fab",
+  ];
+  const padding = 12;
+
+  return selectors.flatMap((selector) =>
+    Array.from(document.querySelectorAll<HTMLElement>(selector)).flatMap((element) => {
+      const rect = element.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return [];
+      return [{
+        x: Math.round(rect.left - boardRect.left - padding),
+        y: Math.round(rect.top - boardRect.top - padding),
+        width: Math.round(rect.width + padding * 2),
+        height: Math.round(rect.height + padding * 2),
+      }];
+    }),
+  );
+}
+
 function findOpenBoardPosition(
   desiredPosition: PostPosition,
   placed: PostPosition[],
@@ -5035,28 +5021,12 @@ function getDefaultMinecraftDownloadPosition(): PostPosition {
   return { x: 274, y: 44 };
 }
 
-function getMinecraftDownloadMaxX(): number {
-  if (typeof window === "undefined") return 1800;
-  return Math.max(0, window.innerWidth - 520 - boardGap);
-}
-
 function formatWallChannelName(wall: Wall): string {
-  const name = wall.name.trim().toLowerCase();
-  const emoji = getWallChannelEmoji(name);
-  return `│ ${emoji} · ${name}`;
+  return wall.name.trim() || "доска";
 }
 
 function formatWallTextName(wall: Wall): string {
   return formatWallChannelName(wall);
-}
-
-function getWallChannelEmoji(name: string): string {
-  if (/лаб|lab|тест|test/i.test(name)) return "🧪";
-  if (/ссыл|link|url/i.test(name)) return "🔗";
-  if (/замет|note/i.test(name)) return "✎";
-  if (/общ|глав|вокзал|чат|chat/i.test(name)) return "👋";
-  if (/арт|рис|pixel|пиксел/i.test(name)) return "🎨";
-  return "•";
 }
 
 function formatWallInitial(value: string): string {
@@ -5188,7 +5158,7 @@ function getComposerTargetWallId(route: AppRoute, activeUser: UserProfile | unde
 
 function isNavRouteActive(route: AppRoute, view: AppRoute["view"]): boolean {
   if (view === "spaceHub") {
-    return route.view === "spaceHub" || route.view === "spaceMinecraft" || route.view === "spaceBoards";
+    return route.view === "spaceHub" || route.view === "spaceBoards";
   }
   return route.view === view;
 }
@@ -5231,7 +5201,7 @@ function canPublishToWall(wall: Wall | undefined, userId: string): boolean {
 }
 
 function isMinecraftAdminUserId(userId: string): boolean {
-  return userId === minecraftOwnerUserId || userId === minecraftOwnerDiscordUserId;
+  return minecraftAdminUserIds.has(userId);
 }
 
 function getPulseScore(post: Post, commentsByPostId: Map<string, Comment[]>): number {
@@ -5290,9 +5260,9 @@ function readRouteFromPath(pathname: string, users: UserProfile[], walls: Wall[]
   if (!first || first === "main" || first === "agents") return { view: "feed" };
   if (first === "feed") return { view: "feed" };
   if (first === "top") return { view: "top" };
-  if (first === "mine") return { view: "spaceMinecraft" };
+  if (first === "mine") return { view: "space", spaceId: minecraftWallId };
   if (first === "space" && !parts[1]) return { view: "spaceHub" };
-  if (first === "space" && parts[1]?.toLowerCase() === "minecraft") return { view: "spaceMinecraft" };
+  if (first === "space" && parts[1]?.toLowerCase() === "minecraft") return { view: "space", spaceId: minecraftWallId };
   if (first === "space" && parts[1]?.toLowerCase() === "boards") return { view: "spaceBoards" };
   if (first === "post" && parts[1]) return { view: "post", postId: parts[1] };
 
@@ -5314,7 +5284,6 @@ function routeToPath(route: AppRoute, userById: Map<string, UserProfile>, walls:
   if (route.view === "feed") return "/feed";
   if (route.view === "top") return "/top";
   if (route.view === "spaceHub") return "/space";
-  if (route.view === "spaceMinecraft") return "/space/minecraft";
   if (route.view === "spaceBoards") return "/space/boards";
   if (route.view === "post") return `/post/${encodeURIComponent(route.postId)}`;
 

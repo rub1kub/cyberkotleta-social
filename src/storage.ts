@@ -8,6 +8,9 @@ const themeKey = "kotleta.theme.v1";
 const pixelColumns = 300;
 const pixelRows = 190;
 const maxPixelCells = pixelColumns * pixelRows;
+const minecraftWallId = "space:minecraft";
+const minecraftDownloadPostId = "minecraft-download-post";
+const minecraftDownloadObjectId = "minecraft:download-card";
 
 export function readSocialState(): SocialState {
   const raw = localStorage.getItem(stateKey) ?? readLegacyState();
@@ -58,9 +61,9 @@ export function sanitizeSocialState(state: SocialState): SocialState {
   ).map(normalizeWall);
   const normalizedWalls = ensureRequiredWalls(walls.length > 0 ? walls : initialState.walls);
   const wallIds = new Set(normalizedWalls.map((wall) => wall.id));
-  const posts = state.posts
+  const posts = ensureMinecraftDownloadPost(state.posts
     .filter((post) => wallIds.has(post.wallId) && userIds.has(post.authorId))
-    .map(normalizePost);
+    .map(normalizePost), state.utilityPositions, userIds);
   const postIds = new Set(posts.map((post) => post.id));
   const comments = normalizeArray<Comment>(state.comments)
     .filter((comment) => postIds.has(comment.postId) && userIds.has(comment.authorId))
@@ -125,7 +128,50 @@ function normalizeUser(user: UserProfile): UserProfile {
   return {
     ...user,
     bio: replaceDeprecatedDemoCopy(typeof user.bio === "string" ? user.bio : ""),
+    status: typeof user.status === "string" && user.status.trim() ? user.status.trim().slice(0, 40) : "Онлайн",
   };
+}
+
+function ensureMinecraftDownloadPost(
+  posts: Post[],
+  utilityPositions: SocialState["utilityPositions"],
+  userIds: Set<string>,
+): Post[] {
+  const existing = posts.find((post) => post.id === minecraftDownloadPostId);
+  const position = normalizePostPosition(utilityPositions?.[minecraftDownloadObjectId]) ?? { x: 274, y: 44 };
+  const authorId = userIds.has("rub1kub") ? "rub1kub" : "guest";
+
+  if (existing) {
+    return posts.map((post) =>
+      post.id === minecraftDownloadPostId
+        ? normalizePost({
+            ...post,
+            wallId: minecraftWallId,
+            authorId: userIds.has(post.authorId) ? post.authorId : authorId,
+            text: "мод пак для игры на WhiteShield",
+            position: post.position ?? position,
+          })
+        : post,
+    );
+  }
+
+  return [
+    normalizePost({
+      id: minecraftDownloadPostId,
+      wallId: minecraftWallId,
+      authorId,
+      text: "мод пак для игры на WhiteShield",
+      attachments: [],
+      reactions: 0,
+      views: {
+        total: 0,
+        uniqueUserIds: [],
+      },
+      position,
+      createdAt: Date.now() - 60000,
+    }),
+    ...posts,
+  ];
 }
 
 function normalizeWall(wall: Wall): Wall {

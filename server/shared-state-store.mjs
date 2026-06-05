@@ -8,6 +8,9 @@ const pixelColumns = 300;
 const pixelRows = 190;
 const maxPixelCells = pixelColumns * pixelRows;
 const pixelPalette = new Set(["#111318", "#f6f8f7", "#21e69a", "#0f9f68", "#6c7685", "#5c6cff", "#d93862"]);
+const minecraftWallId = "space:minecraft";
+const minecraftDownloadPostId = "minecraft-download-post";
+const minecraftDownloadObjectId = "minecraft:download-card";
 
 export function createSharedStateStore({ dataDir = process.env.KOTLETA_DATA_DIR ?? defaultDataDir } = {}) {
   const stateFile = resolve(dataDir, "social-state.json");
@@ -138,7 +141,11 @@ function sanitizeSocialState(state) {
   const userIds = new Set(users.map((user) => user.id));
   const walls = ensureRequiredWalls(normalizeWalls(state?.walls, fallback.walls, userIds), fallback.walls);
   const wallIds = new Set(walls.map((wall) => wall.id));
-  const posts = normalizePosts(state?.posts, fallback.posts, wallIds, userIds);
+  const posts = ensureMinecraftDownloadPost(
+    normalizePosts(state?.posts, fallback.posts, wallIds, userIds),
+    state?.utilityPositions,
+    userIds,
+  );
   const postIds = new Set(posts.map((post) => post.id));
   const comments = normalizeComments(state?.comments, fallback.comments, postIds, userIds);
   const pixelCells = normalizePixelCells(state?.pixelCells, userIds);
@@ -175,12 +182,50 @@ function normalizeUsers(value, fallback) {
       name: user.name,
       handle: typeof user.handle === "string" ? user.handle : `@${user.id}`,
       bio: typeof user.bio === "string" ? user.bio : "",
+      status: typeof user.status === "string" && user.status.trim() ? user.status.trim().slice(0, 40) : "Онлайн",
       joinedAt: Number(user.joinedAt) || Date.now(),
       timeOnSiteMinutes: Math.max(0, Number(user.timeOnSiteMinutes) || 0),
       avatarUrl: typeof user.avatarUrl === "string" ? user.avatarUrl : undefined,
       provider: user.provider === "discord" ? "discord" : undefined,
       discordId: typeof user.discordId === "string" ? user.discordId : undefined,
     }));
+}
+
+function ensureMinecraftDownloadPost(posts, utilityPositions, userIds) {
+  const position = normalizePosition(utilityPositions?.[minecraftDownloadObjectId]) ?? { x: 274, y: 44 };
+  const authorId = userIds.has("rub1kub") ? "rub1kub" : "guest";
+  const existing = posts.find((post) => post.id === minecraftDownloadPostId);
+  if (existing) {
+    return posts.map((post) =>
+      post.id === minecraftDownloadPostId
+        ? {
+            ...post,
+            wallId: minecraftWallId,
+            authorId: userIds.has(post.authorId) ? post.authorId : authorId,
+            text: "мод пак для игры на WhiteShield",
+            position: post.position ?? position,
+          }
+        : post,
+    );
+  }
+
+  return [
+    {
+      id: minecraftDownloadPostId,
+      wallId: minecraftWallId,
+      authorId,
+      text: "мод пак для игры на WhiteShield",
+      attachments: [],
+      reactions: 0,
+      views: {
+        total: 0,
+        uniqueUserIds: [],
+      },
+      position,
+      createdAt: Date.now() - 60000,
+    },
+    ...posts,
+  ];
 }
 
 function ensureGuestUser(users) {

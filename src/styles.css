@@ -224,15 +224,66 @@ textarea:focus-visible {
   text-align: left;
 }
 
+.current-user-card {
+  min-width: 0;
+}
+
+.current-user-card.with-logout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  padding: 6px;
+}
+
+.current-user-card.with-logout .current-user {
+  min-height: 40px;
+  border: 0;
+  background: transparent;
+  padding: 2px;
+}
+
+.user-logout {
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-muted) 72%, var(--surface));
+  color: var(--muted);
+  transition:
+    transform 0.18s var(--ease-out),
+    background 0.18s ease,
+    color 0.18s ease;
+}
+
+.user-logout:hover {
+  background: var(--surface-muted);
+  color: var(--text);
+  transform: translateY(-1px);
+}
+
 .current-user > span:not(.avatar) {
   display: grid;
   gap: 2px;
 }
 
 .current-user small,
+.profile-status,
 .rank-body small {
   color: var(--muted);
   font-size: 12px;
+}
+
+.profile-status {
+  display: inline-flex;
+  margin-top: 4px;
+  font-weight: 760;
 }
 
 .auth-controls {
@@ -4299,7 +4350,6 @@ body {
 .field-toolbelt,
 .field-create-popover,
 .board-directory,
-.field-minimap,
 .mobile-inline-search {
   position: relative;
   z-index: 3;
@@ -4432,52 +4482,6 @@ body {
 .field-composer textarea {
   min-height: 42px;
   font-size: 16px;
-}
-
-.field-minimap {
-  position: fixed;
-  right: 22px;
-  bottom: 94px;
-  z-index: 18;
-  display: grid;
-  width: 142px;
-  gap: 8px;
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  background: color-mix(in srgb, var(--surface) 76%, transparent);
-  padding: 10px;
-  backdrop-filter: blur(16px);
-}
-
-.field-minimap > span {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 820;
-}
-
-.field-minimap > div {
-  position: relative;
-  height: 82px;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background:
-    linear-gradient(var(--line) 1px, transparent 1px),
-    linear-gradient(90deg, var(--line) 1px, transparent 1px),
-    color-mix(in srgb, var(--surface-muted) 64%, transparent);
-  background-size: 12px 12px;
-}
-
-.field-minimap i {
-  position: absolute;
-  left: var(--map-x);
-  top: var(--map-y);
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: var(--accent-2);
-  box-shadow: 0 0 0 4px var(--accent-soft);
-  transform: translate(-50%, -50%);
 }
 
 .board-directory {
@@ -4837,8 +4841,7 @@ body {
   }
 
   .field-toolbelt,
-  .field-create-popover,
-  .field-minimap {
+  .field-create-popover {
     display: none;
   }
 
