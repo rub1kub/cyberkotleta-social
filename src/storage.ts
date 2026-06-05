@@ -56,7 +56,7 @@ export function sanitizeSocialState(state: SocialState): SocialState {
       wall.siteSectionId === "space" ||
       wall.siteSectionId.startsWith("profile:"),
   ).map(normalizeWall);
-  const normalizedWalls = walls.length > 0 ? walls : initialState.walls;
+  const normalizedWalls = ensureRequiredWalls(walls.length > 0 ? walls : initialState.walls);
   const wallIds = new Set(normalizedWalls.map((wall) => wall.id));
   const posts = state.posts
     .filter((post) => wallIds.has(post.wallId) && userIds.has(post.authorId))
@@ -97,6 +97,10 @@ export function sanitizeSocialState(state: SocialState): SocialState {
     walls: normalizedWalls,
     posts,
     comments,
+    utilityPositions: {
+      ...normalizeUtilityPositions(initialState.utilityPositions),
+      ...normalizeUtilityPositions(state.utilityPositions),
+    },
     follows,
     savedPostIds,
     pinnedPostIds,
@@ -142,6 +146,12 @@ function normalizeWall(wall: Wall): Wall {
       .slice(0, 4) as WallActionButton[],
     publishMode: wall.publishMode === "owner" ? "owner" : "open",
   };
+}
+
+function ensureRequiredWalls(walls: Wall[]): Wall[] {
+  const existingIds = new Set(walls.map((wall) => wall.id));
+  const requiredWalls = initialState.walls.filter((wall) => wall.siteSectionId === "space" && !existingIds.has(wall.id));
+  return requiredWalls.length > 0 ? [...walls, ...requiredWalls] : walls;
 }
 
 function normalizeOptionalUrl(value: unknown): string | undefined {
@@ -220,6 +230,17 @@ function normalizePostPosition(value: unknown): Post["position"] {
     x: Math.max(0, Math.min(9999, Math.round(x))),
     y: Math.max(0, Math.min(9999, Math.round(y))),
   };
+}
+
+function normalizeUtilityPositions(value: unknown): Record<string, NonNullable<Post["position"]>> {
+  const positions = value && typeof value === "object" ? value as Record<string, unknown> : {};
+
+  return Object.fromEntries(
+    Object.entries(positions)
+      .filter(([id]) => typeof id === "string" && id.length > 0 && id.length <= 96)
+      .map(([id, position]) => [id, normalizePostPosition(position)])
+      .filter((entry): entry is [string, NonNullable<Post["position"]>] => Boolean(entry[1])),
+  );
 }
 
 function normalizePixelCell(cell: PixelCell): PixelCell | null {

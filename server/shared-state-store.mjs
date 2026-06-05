@@ -136,7 +136,7 @@ function sanitizeSocialState(state) {
   const fallback = createDefaultState();
   const users = ensureGuestUser(normalizeUsers(state?.users, fallback.users));
   const userIds = new Set(users.map((user) => user.id));
-  const walls = normalizeWalls(state?.walls, fallback.walls, userIds);
+  const walls = ensureRequiredWalls(normalizeWalls(state?.walls, fallback.walls, userIds), fallback.walls);
   const wallIds = new Set(walls.map((wall) => wall.id));
   const posts = normalizePosts(state?.posts, fallback.posts, wallIds, userIds);
   const postIds = new Set(posts.map((post) => post.id));
@@ -150,6 +150,10 @@ function sanitizeSocialState(state) {
     walls,
     posts,
     comments,
+    utilityPositions: {
+      ...normalizeUtilityPositions(fallback.utilityPositions),
+      ...normalizeUtilityPositions(state?.utilityPositions),
+    },
     follows: Array.isArray(state?.follows) ? state.follows : fallback.follows,
     savedPostIds: normalizeIdList(state?.savedPostIds, postIds),
     pinnedPostIds: normalizeIdList(state?.pinnedPostIds, postIds),
@@ -203,6 +207,12 @@ function normalizeWalls(value, fallback, userIds) {
       actionButtons: normalizeWallActionButtons(wall.actionButtons),
       publishMode: wall.publishMode === "owner" ? "owner" : "open",
     }));
+}
+
+function ensureRequiredWalls(walls, fallback) {
+  const existingIds = new Set(walls.map((wall) => wall.id));
+  const requiredWalls = fallback.filter((wall) => wall.siteSectionId === "space" && !existingIds.has(wall.id));
+  return requiredWalls.length > 0 ? [...walls, ...requiredWalls] : walls;
 }
 
 function normalizeOptionalUrl(value) {
@@ -308,6 +318,17 @@ function normalizePosition(value) {
     x: Math.max(0, Math.min(1800, Math.round(x))),
     y: Math.max(0, Math.min(2200, Math.round(y))),
   };
+}
+
+function normalizeUtilityPositions(value) {
+  if (!value || typeof value !== "object") return {};
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([id]) => typeof id === "string" && id.length > 0 && id.length <= 96)
+      .map(([id, position]) => [id, normalizePosition(position)])
+      .filter(([, position]) => Boolean(position)),
+  );
 }
 
 function normalizeIdList(value, allowedIds) {

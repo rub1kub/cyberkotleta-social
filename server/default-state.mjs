@@ -66,7 +66,23 @@ export function createDefaultState(now = Date.now()) {
         rules: "Пиши по делу.",
         publishMode: "open",
       },
+      {
+        id: "space:minecraft",
+        siteSectionId: "space",
+        name: "Модпак CyberKotleta",
+        ownerId: "rub1kub",
+        description: "мод пак для игры на WhiteShield",
+        rules: "",
+        accentColor: "green",
+        publishMode: "owner",
+      },
     ],
+    utilityPositions: {
+      "minecraft:download-card": {
+        x: 274,
+        y: 44,
+      },
+    },
     posts: [
       {
         id: "post-1",

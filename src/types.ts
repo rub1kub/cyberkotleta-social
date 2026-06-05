@@ -140,6 +140,7 @@ export type SocialState = {
   walls: Wall[];
   posts: Post[];
   comments: Comment[];
+  utilityPositions: Record<string, PostPosition>;
   follows: Follow[];
   savedPostIds: string[];
   pinnedPostIds: string[];

@@ -45,6 +45,10 @@ try {
   assert(Array.isArray(snapshot.state?.posts), "shared state posts are missing");
 
   const nextState = structuredClone(snapshot.state);
+  nextState.utilityPositions = {
+    ...nextState.utilityPositions,
+    "smoke-object": { x: 120, y: 240 },
+  };
   nextState.posts = [
     {
       id: "server-smoke-post",
@@ -65,6 +69,7 @@ try {
     body: JSON.stringify({ state: nextState, version: snapshot.version }),
   });
   assert(updated.state.posts[0].id === "server-smoke-post", "shared state PUT did not persist");
+  assert(updated.state.utilityPositions["smoke-object"]?.x === 120, "utility position did not persist");
 
   const staleWrite = await fetch(`http://127.0.0.1:${port}/api/social-state`, {
     method: "PUT",

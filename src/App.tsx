@@ -73,7 +73,10 @@ const maxFiles = 6;
 const cyberKotletaModpackName = "Модпак CyberKotleta";
 const cyberKotletaZipPath = "/downloads/cyberkotleta-whiteshield-modpack.zip";
 const cyberKotletaMrpackPath = "/downloads/cyberkotleta-whiteshield-modpack.mrpack";
-const minecraftDownloadPositionKey = "kotleta.minecraft.download.position.v1";
+const minecraftWallId = "space:minecraft";
+const minecraftDownloadObjectId = "minecraft:download-card";
+const minecraftOwnerUserId = "rub1kub";
+const minecraftOwnerDiscordUserId = "discord:1129003754818125915";
 const confettiPieces = 22;
 const reactionPieces = 24;
 const maxReactionBursts = 2;
@@ -280,11 +283,14 @@ function App() {
   const activePost = route.view === "post" ? postById.get(route.postId) : undefined;
   const settingsWall = settingsWallId ? wallById.get(settingsWallId) : undefined;
   const activeProfileWall = activeProfile ? wallById.get(getProfileWallId(activeProfile.id)) : undefined;
+  const minecraftWall = wallById.get(minecraftWallId) ?? createMinecraftWall();
   const activePaletteWall =
     route.view === "space"
       ? activeSpace
       : route.view === "profile"
         ? activeProfileWall
+        : route.view === "spaceMinecraft"
+          ? minecraftWall
         : route.view === "post" && activePost
           ? wallById.get(activePost.wallId)
           : undefined;
@@ -340,6 +346,9 @@ function App() {
   ]);
 
   const composerTargetWallId = getComposerTargetWallId(route, activeUser);
+  const minecraftDownloadPosition =
+    state.utilityPositions[minecraftDownloadObjectId] ?? getDefaultMinecraftDownloadPosition();
+  const canManageMinecraft = activeUser ? canManageWall(minecraftWall, activeUser.id) : false;
 
   const applySharedWriteResult = useCallback((snapshot: Awaited<ReturnType<typeof writeSharedSocialState>>) => {
     if (!snapshot) return;
@@ -557,7 +566,9 @@ function App() {
   function openWallSettings(wallId: string) {
     setState((current) => ({
       ...current,
-      walls: ensureWallExists(current.walls, wallId, current.users),
+      walls: wallId === minecraftWallId
+        ? ensureMinecraftWallExists(current.walls)
+        : ensureWallExists(current.walls, wallId, current.users),
     }));
     setSettingsWallId(wallId);
   }
@@ -673,6 +684,19 @@ function App() {
             }
           : post,
       ),
+    }));
+  }
+
+  function moveMinecraftDownload(x: number, y: number) {
+    setState((current) => ({
+      ...current,
+      utilityPositions: {
+        ...current.utilityPositions,
+        [minecraftDownloadObjectId]: clampPostPosition({
+          x: Math.round(x / boardGridSize) * boardGridSize,
+          y: Math.round(y / boardGridSize) * boardGridSize,
+        }, getMinecraftDownloadMaxX()),
+      },
     }));
   }
 
@@ -1249,7 +1273,15 @@ function App() {
         ) : null}
 
         {route.view === "spaceMinecraft" ? (
-          <MinecraftUtility onBack={() => navigate({ view: "spaceHub" })} onCelebrate={() => celebrate("pack")} />
+          <MinecraftUtility
+            canManage={canManageMinecraft}
+            position={minecraftDownloadPosition}
+            wall={minecraftWall}
+            onBack={() => navigate({ view: "spaceHub" })}
+            onCelebrate={() => celebrate("pack")}
+            onMovePosition={moveMinecraftDownload}
+            onOpenSettings={() => openWallSettings(minecraftWallId)}
+          />
         ) : null}
 
         {route.view === "spaceBoards" ? (
@@ -1398,7 +1430,7 @@ function App() {
       {settingsWall ? (
         <WallSettingsDialog
           wall={settingsWall}
-          canDelete={!settingsWall.id.startsWith(profileWallPrefix)}
+          canDelete={!settingsWall.id.startsWith(profileWallPrefix) && settingsWall.id !== minecraftWallId}
           onClose={() => setSettingsWallId(null)}
           onDelete={() => deleteWall(settingsWall.id)}
           onSave={(payload) => updateWallSettings(settingsWall.id, payload)}
@@ -4215,8 +4247,23 @@ function CommunityBoardsPage({
   );
 }
 
-function MinecraftUtility({ onBack, onCelebrate }: { onBack: () => void; onCelebrate: () => void }) {
-  const [downloadPosition, setDownloadPosition] = useState<PostPosition>(() => readMinecraftDownloadPosition());
+function MinecraftUtility({
+  canManage,
+  position,
+  wall,
+  onBack,
+  onCelebrate,
+  onMovePosition,
+  onOpenSettings,
+}: {
+  canManage: boolean;
+  position: PostPosition;
+  wall: Wall;
+  onBack: () => void;
+  onCelebrate: () => void;
+  onMovePosition: (x: number, y: number) => void;
+  onOpenSettings: () => void;
+}) {
   const [downloadDrag, setDownloadDrag] = useState<{
     origin: PostPosition;
     pointerX: number;
@@ -4224,19 +4271,11 @@ function MinecraftUtility({ onBack, onCelebrate }: { onBack: () => void; onCeleb
   } | null>(null);
   const [downloadPreviewPosition, setDownloadPreviewPosition] = useState<PostPosition | null>(null);
   const downloadPreviewPositionRef = useRef<PostPosition | null>(null);
-  const minecraftWall: Wall = {
-    id: "space:minecraft",
-    siteSectionId: spaceSectionId,
-    name: cyberKotletaModpackName,
-    description: "мод пак для игры на WhiteShield",
-    accentColor: "green",
-    publishMode: "owner",
-  };
   const pageStyle = {
-    ...getWallAccentStyle(minecraftWall),
+    ...getWallAccentStyle(wall),
     "--field-board-height": "760px",
   } as CSSProperties;
-  const currentDownloadPosition = downloadDrag && downloadPreviewPosition ? downloadPreviewPosition : downloadPosition;
+  const currentDownloadPosition = downloadDrag && downloadPreviewPosition ? downloadPreviewPosition : position;
 
   useEffect(() => {
     if (!downloadDrag) return;
@@ -4254,8 +4293,7 @@ function MinecraftUtility({ onBack, onCelebrate }: { onBack: () => void; onCeleb
     function handlePointerUp() {
       const finalPosition = downloadPreviewPositionRef.current;
       if (finalPosition) {
-        setDownloadPosition(finalPosition);
-        writeMinecraftDownloadPosition(finalPosition);
+        onMovePosition(finalPosition.x, finalPosition.y);
       }
       setDownloadDrag(null);
       downloadPreviewPositionRef.current = null;
@@ -4271,15 +4309,16 @@ function MinecraftUtility({ onBack, onCelebrate }: { onBack: () => void; onCeleb
       window.removeEventListener("pointerup", handlePointerUp);
       window.removeEventListener("pointercancel", handlePointerUp);
     };
-  }, [downloadDrag]);
+  }, [downloadDrag, onMovePosition]);
 
   function startDownloadDrag(event: React.PointerEvent<HTMLDivElement>) {
+    if (!canManage) return;
     if (event.button !== 0 || isDragIgnored(event.target)) return;
     if (window.innerWidth < 760) return;
 
     event.preventDefault();
     event.currentTarget.setPointerCapture?.(event.pointerId);
-    const nextPosition = clampPostPosition(downloadPosition, getMinecraftDownloadMaxX());
+    const nextPosition = clampPostPosition(position, getMinecraftDownloadMaxX());
     setDownloadDrag({
       origin: nextPosition,
       pointerX: event.clientX,
@@ -4291,18 +4330,19 @@ function MinecraftUtility({ onBack, onCelebrate }: { onBack: () => void; onCeleb
 
   return (
     <section className="space-page field-page board-space-page minecraft-space-page" style={pageStyle}>
-      <div className="profile-cover space-cover wall-cover field-wall-cover minecraft-wall-cover" style={getWallCoverStyle(minecraftWall)}>
+      <div className="profile-cover space-cover wall-cover field-wall-cover minecraft-wall-cover" style={getWallCoverStyle(wall)}>
         <div className="space-copy">
           <div className="wall-title-row">
-            <WallAvatar fallback={minecraftWall.name} wall={minecraftWall} />
+            <WallAvatar fallback={wall.name} wall={wall} />
             <div>
               <span className="space-kicker">Доска</span>
               <h1>
-                <ChannelName wall={minecraftWall} size="hero" />
+                <ChannelName wall={wall} size="hero" />
               </h1>
             </div>
           </div>
-          <p>{minecraftWall.description}</p>
+          {wall.description ? <p>{wall.description}</p> : null}
+          <WallActionLinks buttons={wall.actionButtons ?? []} />
         </div>
 
         <div className="space-actions">
@@ -4311,11 +4351,16 @@ function MinecraftUtility({ onBack, onCelebrate }: { onBack: () => void; onCeleb
             <MiniMetric label="Сервер" value="WhiteShield" />
             <MiniMetric label="Версия" value="1.21.1" />
           </div>
-          <div className="space-action-row single">
+          <div className={canManage ? "space-action-row" : "space-action-row single"}>
             <button className="follow-button" onClick={onBack}>
               <ArrowLeft size={15} />
               Назад
             </button>
+            {canManage ? (
+              <button className="wall-settings-button" onClick={onOpenSettings} aria-label="Настройки доски">
+                <Settings size={16} />
+              </button>
+            ) : null}
           </div>
         </div>
       </div>
@@ -4328,7 +4373,7 @@ function MinecraftUtility({ onBack, onCelebrate }: { onBack: () => void; onCeleb
         <div className="wall-board-canvas">
           <div
             className={downloadDrag ? "wall-board-item minecraft-download-item dragging" : "wall-board-item minecraft-download-item"}
-            onPointerDown={startDownloadDrag}
+            onPointerDown={canManage ? startDownloadDrag : undefined}
             style={
               {
                 "--board-x": `${currentDownloadPosition.x}px`,
@@ -4336,7 +4381,7 @@ function MinecraftUtility({ onBack, onCelebrate }: { onBack: () => void; onCeleb
               } as CSSProperties
             }
           >
-            <span className="board-drag-handle" data-drag-handle title="Перетащить карточку" aria-hidden="true" />
+            {canManage ? <span className="board-drag-handle" data-drag-handle title="Перетащить карточку" aria-hidden="true" /> : null}
             <article className="post-card board-card minecraft-download-post">
               <header className="minecraft-post-head">
                 <span className="minecraft-post-mark">
@@ -4796,14 +4841,23 @@ function normalizeRuntimeBoardCopy(current: SocialState): SocialState {
     changed = true;
     return { ...wall, description, rules };
   });
+  const wallsWithMinecraft = ensureMinecraftWallExists(walls);
+  if (wallsWithMinecraft !== walls) changed = true;
   const posts = current.posts.map((post) => {
     const text = normalizeBoardCopyText(post.text);
     if (text === post.text) return post;
     changed = true;
     return { ...post, text };
   });
+  const utilityPositions = current.utilityPositions[minecraftDownloadObjectId]
+    ? current.utilityPositions
+    : {
+        ...current.utilityPositions,
+        [minecraftDownloadObjectId]: getDefaultMinecraftDownloadPosition(),
+      };
+  if (utilityPositions !== current.utilityPositions) changed = true;
 
-  return changed ? { ...current, users, walls, posts } : current;
+  return changed ? { ...current, users, walls: wallsWithMinecraft, posts, utilityPositions } : current;
 }
 
 function normalizeBoardCopyText(text: string): string {
@@ -4973,30 +5027,6 @@ function isDragIgnored(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
   if (target.closest("[data-drag-handle]")) return false;
   return Boolean(target.closest("button, a, input, textarea, select, audio, video, [data-no-drag]"));
-}
-
-function readMinecraftDownloadPosition(): PostPosition {
-  const fallback = getDefaultMinecraftDownloadPosition();
-  if (typeof window === "undefined") return fallback;
-
-  try {
-    const raw = localStorage.getItem(minecraftDownloadPositionKey);
-    if (!raw) return fallback;
-    const parsed = JSON.parse(raw) as Partial<PostPosition>;
-    const x = Number(parsed.x);
-    const y = Number(parsed.y);
-    return clampPostPosition({
-      x: Number.isFinite(x) ? x : fallback.x,
-      y: Number.isFinite(y) ? y : fallback.y,
-    }, getMinecraftDownloadMaxX());
-  } catch {
-    return fallback;
-  }
-}
-
-function writeMinecraftDownloadPosition(position: PostPosition): void {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(minecraftDownloadPositionKey, JSON.stringify(position));
 }
 
 function getDefaultMinecraftDownloadPosition(): PostPosition {
@@ -5191,13 +5221,18 @@ function getWallDisplayName(wall: Wall | undefined, userById: Map<string, UserPr
 function canManageWall(wall: Wall | undefined, userId: string): boolean {
   if (!wall) return false;
   if (wall.id.startsWith(profileWallPrefix)) return wall.id === getProfileWallId(userId);
+  if (wall.id === minecraftWallId) return isMinecraftAdminUserId(userId) || wall.ownerId === userId;
   return wall.ownerId === userId;
 }
 
 function canPublishToWall(wall: Wall | undefined, userId: string): boolean {
   if (!wall) return false;
   if (wall.id.startsWith(profileWallPrefix)) return true;
-  return wall.publishMode !== "owner" || wall.ownerId === userId;
+  return wall.publishMode !== "owner" || canManageWall(wall, userId);
+}
+
+function isMinecraftAdminUserId(userId: string): boolean {
+  return userId === minecraftOwnerUserId || userId === minecraftOwnerDiscordUserId;
 }
 
 function getPulseScore(post: Post, commentsByPostId: Map<string, Comment[]>): number {
@@ -5230,6 +5265,23 @@ function ensureWallExists(walls: Wall[], wallId: string, users: UserProfile[]): 
   }
 
   return walls;
+}
+
+function createMinecraftWall(): Wall {
+  return {
+    id: minecraftWallId,
+    siteSectionId: spaceSectionId,
+    name: cyberKotletaModpackName,
+    ownerId: minecraftOwnerUserId,
+    description: "мод пак для игры на WhiteShield",
+    rules: "",
+    accentColor: "green",
+    publishMode: "owner",
+  };
+}
+
+function ensureMinecraftWallExists(walls: Wall[]): Wall[] {
+  return walls.some((wall) => wall.id === minecraftWallId) ? walls : [createMinecraftWall(), ...walls];
 }
 
 function readRouteFromPath(pathname: string, users: UserProfile[], walls: Wall[]): AppRoute {
