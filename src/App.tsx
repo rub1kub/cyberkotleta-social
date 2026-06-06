@@ -37,7 +37,7 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ChangeEvent, CSSProperties, FormEvent } from "react";
+import type { ChangeEvent, ClipboardEvent, CSSProperties, FormEvent } from "react";
 import { flushSync } from "react-dom";
 import {
   buildDiscordAuthUrl,
@@ -643,6 +643,7 @@ function App() {
 
   function publishPostToWall(wallId: string | undefined, text: string, attachments: MediaAttachment[]) {
     if (!wallId || !activeUser || (!text.trim() && attachments.length === 0)) return;
+    const position = getNewBoardPostPosition(state.posts.filter((post) => post.wallId === wallId));
 
     setState((current) => {
       const walls = ensureWallExists(current.walls, wallId, current.users);
@@ -660,6 +661,7 @@ function App() {
           total: 0,
           uniqueUserIds: [],
         },
+        position,
         createdAt: Date.now(),
       };
 
@@ -928,12 +930,15 @@ function App() {
   }
 
   function repostPost(postId: string) {
-    const sourcePost = postById.get(postId);
+    const sourcePost = getRepostSourcePost(postById.get(postId), postById);
     if (!activeUser || !sourcePost) return;
+    if (hasUserRepostedPost(sourcePost.id, activeUser.id, postById)) return;
 
+    const wallId = getProfileWallId(activeUser.id);
+    const position = getNewBoardPostPosition(state.posts.filter((post) => post.wallId === wallId));
     const repost: Post = {
       id: crypto.randomUUID(),
-      wallId: getProfileWallId(activeUser.id),
+      wallId,
       authorId: activeUser.id,
       text: "",
       attachments: [],
@@ -942,21 +947,27 @@ function App() {
         total: 0,
         uniqueUserIds: [],
       },
-      repostOfId: postId,
+      position,
+      repostOfId: sourcePost.id,
       createdAt: Date.now(),
     };
 
-    setState((current) => ({
-      ...current,
-      walls: ensureWallExists(current.walls, repost.wallId, current.users),
-      posts: [repost, ...current.posts],
-    notifications: addPostNotification(current, {
-        kind: "repost",
-        actorId: activeUser.id,
-        postId,
-        text: "Заметка появилась на доске",
-      }),
-    }));
+    setState((current) => {
+      const currentPostById = new Map(current.posts.map((post) => [post.id, post]));
+      if (hasUserRepostedPost(sourcePost.id, activeUser.id, currentPostById)) return current;
+
+      return {
+        ...current,
+        walls: ensureWallExists(current.walls, repost.wallId, current.users),
+        posts: [repost, ...current.posts],
+        notifications: addPostNotification(current, {
+          kind: "repost",
+          actorId: activeUser.id,
+          postId: sourcePost.id,
+          text: "Заметка появилась на доске",
+        }),
+      };
+    });
     celebrate("post");
   }
 
@@ -2063,7 +2074,7 @@ function WallBoard({
     const observer = new ResizeObserver(updateWidth);
     observer.observe(node);
     return () => observer.disconnect();
-  }, [isFieldBoard]);
+  }, [isFieldBoard, posts.length]);
 
   useEffect(() => {
     if (!drag) return;
@@ -2149,6 +2160,7 @@ function WallBoard({
               <PostCard
                 activeUserId={activeUserId}
                 commentCount={commentCount}
+                hasReposted={hasUserRepostedPost(post.id, activeUserId, postById)}
                 isPinned={pinnedPostIds.has(post.id)}
                 isSaved={savedPostIds.has(post.id)}
                 post={post}
@@ -2393,14 +2405,15 @@ function Composer({
   const [isReading, setIsReading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  async function attachFiles(files: FileList | null) {
-    if (!files?.length) return;
+  async function attachFiles(files: FileList | File[] | null) {
+    const mediaFiles = Array.from(files ?? []).filter((file) => getMediaKind(file));
+    if (mediaFiles.length === 0 || attachments.length >= maxFiles) return;
 
     setIsReading(true);
     const next: MediaAttachment[] = [];
 
     try {
-      for (const file of Array.from(files).slice(0, maxFiles - attachments.length)) {
+      for (const file of mediaFiles.slice(0, maxFiles - attachments.length)) {
         const type = getMediaKind(file);
         if (!type) continue;
 
@@ -2419,6 +2432,14 @@ function Composer({
 
   function removeAttachment(id: string) {
     setAttachments((current) => current.filter((attachment) => attachment.id !== id));
+  }
+
+  function handlePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    const pastedFiles = getClipboardMediaFiles(event.clipboardData);
+    if (pastedFiles.length === 0) return;
+
+    event.preventDefault();
+    void attachFiles(pastedFiles);
   }
 
   function submit() {
@@ -2440,6 +2461,7 @@ function Composer({
       <textarea
         value={text}
         onChange={(event) => setText(event.target.value)}
+        onPaste={handlePaste}
         placeholder={placeholder}
       />
 
@@ -2998,6 +3020,7 @@ function MobileComposerSheet({
 function PostCard({
   activeUserId,
   commentCount,
+  hasReposted,
   isPinned,
   isSaved,
   objectKind,
@@ -3021,6 +3044,7 @@ function PostCard({
 }: {
   activeUserId: string | undefined;
   commentCount: number;
+  hasReposted: boolean;
   isPinned: boolean;
   isSaved: boolean;
   objectKind?: ObjectKind;
@@ -3316,9 +3340,9 @@ function PostCard({
               <Bookmark size={15} />
               {isSaved ? "Из сохранённого" : "В сохранённое"}
             </button>
-            <button onClick={() => onRepost(post.id)}>
+            <button onClick={() => onRepost(post.id)} disabled={hasReposted}>
               <Repeat2 size={15} />
-              Поделиться на доске
+              {hasReposted ? "Уже на доске" : "Поделиться на доске"}
             </button>
             <button onClick={() => onPin(post.id)}>
               <Pin size={15} />
@@ -3383,9 +3407,25 @@ function PostCard({
       {repostedPost ? (
         <button className="repost-card" onClick={() => onOpenPost(repostedPost.id)}>
           <Repeat2 size={15} />
-          <span>
+          <span className="repost-card-body">
             <strong>{repostAuthor?.name ?? "Пользователь"}</strong>
-            <small>{repostedPost.text || "Заметка"}</small>
+            {repostedPost.text ? <small>{repostedPost.text}</small> : <small>Медиа</small>}
+            {repostedPost.attachments.length > 0 ? (
+              <span className="repost-media-strip" aria-label={formatMediaSummary(repostedPost.attachments)}>
+                {repostedPost.attachments.slice(0, 3).map((attachment) => (
+                  <span key={attachment.id} className="repost-media-thumb">
+                    {attachment.type === "image" ? (
+                      <img src={attachment.url} alt="" />
+                    ) : attachment.type === "video" ? (
+                      <Video size={15} />
+                    ) : (
+                      <AudioLines size={15} />
+                    )}
+                  </span>
+                ))}
+                {repostedPost.attachments.length > 3 ? <i>+{repostedPost.attachments.length - 3}</i> : null}
+              </span>
+            ) : null}
           </span>
         </button>
       ) : null}
@@ -3424,7 +3464,13 @@ function PostCard({
         >
           <Bookmark size={16} />
         </button>
-        <button className="post-stat" onClick={() => onRepost(post.id)} aria-label="Поделиться на доске">
+        <button
+          className={hasReposted ? "post-stat reposted" : "post-stat"}
+          onClick={() => onRepost(post.id)}
+          disabled={hasReposted}
+          aria-label={hasReposted ? "Уже на вашей доске" : "Поделиться на доске"}
+          title={hasReposted ? "Уже на вашей доске" : "Поделиться на доске"}
+        >
           <Repeat2 size={16} />
         </button>
       </footer>
@@ -3513,6 +3559,7 @@ function PostThreadPage({
       <PostCard
         activeUserId={activeUser?.id}
         commentCount={comments.length}
+        hasReposted={hasUserRepostedPost(post.id, activeUser?.id, postById)}
         isPinned={pinnedPostIds.has(post.id)}
         isSaved={savedPostIds.has(post.id)}
         post={post}
@@ -4408,6 +4455,64 @@ function getMediaKind(file: File): MediaKind | null {
   return null;
 }
 
+function formatMediaSummary(attachments: MediaAttachment[]): string {
+  if (attachments.length === 0) return "Без медиа";
+
+  const counts = attachments.reduce<Record<MediaKind, number>>((acc, attachment) => {
+    acc[attachment.type] += 1;
+    return acc;
+  }, { audio: 0, image: 0, video: 0 });
+  const parts = [
+    counts.image ? `${counts.image} фото` : "",
+    counts.video ? `${counts.video} видео` : "",
+    counts.audio ? `${counts.audio} аудио` : "",
+  ].filter(Boolean);
+
+  return parts.join(", ");
+}
+
+function getClipboardMediaFiles(data: DataTransfer | null): File[] {
+  if (!data) return [];
+
+  const files = Array.from(data.files).filter((file) => getMediaKind(file));
+  if (files.length > 0) return files;
+
+  return Array.from(data.items)
+    .filter((item) => item.kind === "file")
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => Boolean(file && getMediaKind(file)));
+}
+
+function getRepostSourcePost(post: Post | undefined, postById: Map<string, Post>): Post | undefined {
+  if (!post) return undefined;
+
+  let source = post;
+  const visited = new Set<string>();
+  while (source.repostOfId && !visited.has(source.id)) {
+    visited.add(source.id);
+    const next = postById.get(source.repostOfId);
+    if (!next) break;
+    source = next;
+  }
+
+  return source;
+}
+
+function hasUserRepostedPost(postId: string, userId: string | undefined, postById: Map<string, Post>): boolean {
+  if (!userId) return false;
+
+  const source = getRepostSourcePost(postById.get(postId), postById);
+  if (!source) return false;
+
+  for (const post of postById.values()) {
+    if (!post.repostOfId || post.authorId !== userId) continue;
+    const repostSource = getRepostSourcePost(post, postById);
+    if (repostSource?.id === source.id) return true;
+  }
+
+  return false;
+}
+
 function addPostNotification(
   current: SocialState,
   payload: {
@@ -4851,6 +4956,56 @@ function resolveBoardPostLayout(posts: Post[], maxX = 1800, defaultOffsetX = 0):
 
     return { post, position };
   });
+}
+
+function getNewBoardPostPosition(existingPosts: Post[]): PostPosition {
+  const board = typeof document !== "undefined"
+    ? document.querySelector<HTMLElement>(".field-board")
+    : null;
+  if (!board) {
+    const maxX = typeof window !== "undefined"
+      ? Math.max(0, window.innerWidth - boardCardWidth - boardGap)
+      : 1800;
+    const placed = resolveBoardPostLayout(existingPosts, maxX).map(({ position }) => position);
+    return findOpenBoardPosition(
+      getFallbackNewBoardPosition(existingPosts.length),
+      placed,
+      existingPosts.length,
+      maxX,
+    );
+  }
+
+  const boardWidth = board?.getBoundingClientRect().width ?? 0;
+  const maxX = boardWidth > 0 ? Math.max(0, boardWidth - boardCardWidth - boardGap) : 1800;
+  const protectedRects = board ? getFieldProtectedRects(board) : [];
+  const placed = resolveBoardPostLayout(existingPosts, maxX).map(({ position }) => position);
+  const desiredPosition =
+    getComposerDropPosition(board) ??
+    findOpenBoardPosition(getDefaultBoardPosition(existingPosts.length), placed, existingPosts.length, maxX);
+
+  return resolveSafeBoardPosition(desiredPosition, protectedRects, placed, maxX);
+}
+
+function getFallbackNewBoardPosition(index: number): PostPosition {
+  const isMobile = typeof window !== "undefined" && window.innerWidth < 760;
+  return {
+    x: isMobile ? 24 : 274 + (index % 2) * (boardCardWidth + boardGap),
+    y: isMobile ? 320 : 360 + Math.floor(index / 2) * (boardCardHeight + boardGap),
+  };
+}
+
+function getComposerDropPosition(board: HTMLElement | null): PostPosition | null {
+  if (!board || typeof document === "undefined") return null;
+
+  const composer = document.querySelector<HTMLElement>(".board-composer, .field-create-popover .field-composer");
+  if (!composer) return null;
+
+  const boardRect = board.getBoundingClientRect();
+  const composerRect = composer.getBoundingClientRect();
+  return clampPostPosition({
+    x: composerRect.left - boardRect.left,
+    y: composerRect.bottom - boardRect.top + boardGap,
+  }, Math.max(0, boardRect.width - boardCardWidth - boardGap));
 }
 
 function resolveSafeBoardLayout(

@@ -2941,6 +2941,11 @@ body {
   background: var(--surface-muted);
 }
 
+.post-menu button:disabled {
+  color: var(--muted);
+  background: transparent;
+}
+
 .post-menu .danger-action {
   color: var(--danger);
 }
@@ -3003,11 +3008,47 @@ body {
   min-width: 0;
 }
 
+.repost-card-body {
+  display: grid;
+  gap: 6px;
+  flex: 1;
+}
+
 .repost-card small {
   overflow: hidden;
   color: var(--muted);
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+}
+
+.repost-media-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.repost-media-thumb,
+.repost-media-strip i {
+  display: inline-grid;
+  width: 42px;
+  height: 34px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 780;
+}
+
+.repost-media-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .post-footer {
@@ -3706,6 +3747,10 @@ body {
 
 .post-card.is-repost .repost-card small {
   font-size: 12px;
+}
+
+.post-stat.reposted {
+  color: var(--accent-2);
 }
 
 .post-meta {
