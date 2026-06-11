@@ -44,6 +44,17 @@ try {
   assert(snapshot.state?.activeUserId === "guest", "shared state did not initialize as guest");
   assert(Array.isArray(snapshot.state?.posts), "shared state posts are missing");
 
+  const eventController = new AbortController();
+  const eventResponse = await fetch(`http://127.0.0.1:${port}/api/social-state/events`, {
+    signal: eventController.signal,
+  });
+  assert(eventResponse.ok, "shared state SSE endpoint failed");
+  assert(eventResponse.headers.get("Content-Type")?.includes("text/event-stream"), "shared state SSE content type is wrong");
+  const eventText = await readFirstStreamEvent(eventResponse);
+  eventController.abort();
+  assert(eventText.includes("event: social-state"), "shared state SSE did not emit a state event");
+  assert(eventText.includes(`\"version\":${snapshot.version}`), "shared state SSE did not emit current version");
+
   const nextState = structuredClone(snapshot.state);
   nextState.utilityPositions = {
     ...nextState.utilityPositions,
@@ -166,6 +177,25 @@ async function fetchText(url) {
   const response = await fetch(url);
   assert(response.ok, `${url} returned ${response.status}`);
   return response.text();
+}
+
+async function readFirstStreamEvent(response) {
+  const reader = response.body?.getReader();
+  assert(reader, "stream response body is missing");
+  const decoder = new TextDecoder();
+  let text = "";
+
+  while (!text.includes("\n\n")) {
+    const result = await Promise.race([
+      reader.read(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("SSE event timeout")), 2000)),
+    ]);
+    if (result.done) break;
+    text += decoder.decode(result.value, { stream: true });
+  }
+
+  await reader.cancel().catch(() => undefined);
+  return text;
 }
 
 function assert(condition, message) {

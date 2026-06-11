@@ -2,6 +2,7 @@ import { sanitizeSocialState } from "./storage";
 import type { SocialState } from "./types";
 
 const sharedStatePath = "/api/social-state";
+const sharedStateEventsPath = "/api/social-state/events";
 
 export type SharedStateSnapshot = {
   conflict?: boolean;
@@ -56,4 +57,27 @@ export async function writeSharedSocialState(
   } catch {
     return null;
   }
+}
+
+export function subscribeSharedSocialState(
+  onSnapshot: (snapshot: SharedStateSnapshot) => void,
+): () => void {
+  if (typeof EventSource === "undefined") return () => undefined;
+
+  const source = new EventSource(sharedStateEventsPath);
+  source.addEventListener("social-state", (event) => {
+    try {
+      const payload = JSON.parse((event as MessageEvent<string>).data) as SharedStateSnapshot;
+      if (!payload.state || !Number.isFinite(payload.version)) return;
+
+      onSnapshot({
+        state: sanitizeSocialState(payload.state),
+        version: payload.version,
+      });
+    } catch {
+      // Broken SSE payload should not break the app.
+    }
+  });
+
+  return () => source.close();
 }

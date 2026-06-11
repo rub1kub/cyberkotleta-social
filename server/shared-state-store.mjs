@@ -22,6 +22,7 @@ const sketchPalette = new Set(["#111318", "#f6f8f7", "#21e69a", "#0f9f68", "#6c7
 
 export function createSharedStateStore({ dataDir = process.env.KOTLETA_DATA_DIR ?? defaultDataDir } = {}) {
   const stateFile = resolve(dataDir, "social-state.json");
+  const subscribers = new Set();
 
   async function read() {
     try {
@@ -55,13 +56,65 @@ export function createSharedStateStore({ dataDir = process.env.KOTLETA_DATA_DIR 
     await backupCurrentState(stateFile);
     await writeFile(tempFile, JSON.stringify(payload, null, 2), "utf8");
     await rename(tempFile, stateFile);
+    notify(payload);
     return payload;
+  }
+
+  function notify(payload) {
+    for (const subscriber of subscribers) {
+      subscriber(payload);
+    }
+  }
+
+  function subscribe(subscriber) {
+    subscribers.add(subscriber);
+    return () => subscribers.delete(subscriber);
   }
 
   return {
     read,
     stateFile,
+    subscribe,
     write,
+  };
+}
+
+export function createSocialStateEventsHandler(store = createSharedStateStore()) {
+  return async function handleSocialStateEvents(request, response) {
+    if (request.method !== "GET") {
+      response.setHeader("Allow", "GET");
+      sendText(response, 405, "Method not allowed");
+      return;
+    }
+
+    response.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-store, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+
+    let closed = false;
+
+    function sendSnapshot(payload) {
+      if (closed || response.destroyed) return;
+      response.write(`event: social-state\nid: ${payload.version}\ndata: ${JSON.stringify(payload)}\n\n`);
+    }
+
+    const unsubscribe = store.subscribe(sendSnapshot);
+    const heartbeat = setInterval(() => {
+      if (!closed && !response.destroyed) {
+        response.write(": keepalive\n\n");
+      }
+    }, 25000);
+
+    request.on("close", () => {
+      closed = true;
+      clearInterval(heartbeat);
+      unsubscribe();
+    });
+
+    sendSnapshot(await store.read());
   };
 }
 

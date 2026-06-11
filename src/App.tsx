@@ -72,7 +72,7 @@ import {
 } from "./auth";
 import type { DiscordSession } from "./auth";
 import { createMediaAttachment } from "./mediaUpload";
-import { readSharedSocialState, writeSharedSocialState } from "./sharedState";
+import { readSharedSocialState, subscribeSharedSocialState, writeSharedSocialState } from "./sharedState";
 import { readSocialState, readTheme, socialStateStorageKey, writeSocialState, writeTheme } from "./storage";
 import type {
   Comment,
@@ -524,37 +524,39 @@ function App() {
   useEffect(() => {
     let cancelled = false;
 
-    async function applySharedSnapshot() {
-      if (socialStateWriteTimerRef.current) return;
-
-      const snapshot = await readSharedSocialState();
+    function receiveSharedSnapshot(snapshot: Awaited<ReturnType<typeof readSharedSocialState>>) {
       if (!snapshot || cancelled || snapshot.version === sharedStateVersionRef.current) return;
 
+      sharedStateReadyRef.current = true;
       sharedStateVersionRef.current = snapshot.version;
       skipNextSharedStateWriteRef.current = true;
       setState((current) => mergeSharedStateWithLocalSession(current, snapshot.state));
     }
 
+    async function pollSharedSnapshot() {
+      if (socialStateWriteTimerRef.current) return;
+
+      const snapshot = await readSharedSocialState();
+      receiveSharedSnapshot(snapshot);
+    }
+
     async function loadSharedState() {
       const snapshot = await readSharedSocialState();
-      if (cancelled) return;
-
-      if (snapshot) {
-        sharedStateReadyRef.current = true;
-        sharedStateVersionRef.current = snapshot.version;
-        skipNextSharedStateWriteRef.current = true;
-        setState((current) => mergeSharedStateWithLocalSession(current, snapshot.state));
-      }
+      receiveSharedSnapshot(snapshot);
     }
 
     void loadSharedState();
-    const interval = window.setInterval(() => {
-      void applySharedSnapshot();
-    }, sharedStatePollMs);
+    const unsubscribe = subscribeSharedSocialState(receiveSharedSnapshot);
+    const interval = typeof EventSource === "undefined"
+      ? window.setInterval(() => {
+          void pollSharedSnapshot();
+        }, sharedStatePollMs)
+      : null;
 
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
+      unsubscribe();
+      if (interval) window.clearInterval(interval);
     };
   }, []);
 
