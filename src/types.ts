@@ -17,6 +17,15 @@ export type MediaFocus = {
   y: number;
 };
 
+export type WallPrivacyMode = "public" | "link" | "invite";
+
+export type WallInviteSettings = {
+  code: string;
+  expiresAt?: number;
+  maxUses?: number;
+  usedBy: string[];
+};
+
 export type UserProfile = {
   id: string;
   name: string;
@@ -24,6 +33,7 @@ export type UserProfile = {
   bio: string;
   status?: string;
   joinedAt: number;
+  lastSeenAt?: number;
   timeOnSiteMinutes: number;
   avatarUrl?: string;
   provider?: "local" | "discord";
@@ -40,15 +50,87 @@ export type PostPosition = {
   y: number;
 };
 
+export type PostKind =
+  | "note"
+  | "media"
+  | "sketch"
+  | "idea"
+  | "list"
+  | "question"
+  | "poll"
+  | "checklist"
+  | "link"
+  | "signal";
+
+export type PostInteractionSettings = {
+  comments: boolean;
+  reactions: boolean;
+  reposts: boolean;
+  saves: boolean;
+  views: boolean;
+};
+
+export type PostAppearance = {
+  accentColor?: string;
+  background: "plain" | "soft" | "glass" | "gradient" | "paper";
+  shape: "soft" | "round" | "sharp" | "ticket";
+  size: "compact" | "normal" | "wide" | "tall";
+};
+
+export type SketchPoint = {
+  x: number;
+  y: number;
+};
+
+export type SketchStroke = {
+  id: string;
+  color: string;
+  width: number;
+  points: SketchPoint[];
+};
+
+export type ChecklistItem = {
+  id: string;
+  text: string;
+  checkedBy: string[];
+};
+
+export type PollOption = {
+  id: string;
+  text: string;
+  voterIds: string[];
+};
+
+export type PostPoll = {
+  question: string;
+  multi: boolean;
+  options: PollOption[];
+};
+
+export type PostConnection = {
+  id: string;
+  fromPostId: string;
+  toPostId: string;
+  authorId: string;
+  label?: string;
+  createdAt: number;
+};
+
 export type Post = {
   id: string;
   wallId: string;
   authorId: string;
+  kind?: PostKind;
   text: string;
   attachments: MediaAttachment[];
   reactions: number;
   views: PostViewStats;
   position?: PostPosition;
+  appearance?: PostAppearance;
+  settings?: PostInteractionSettings;
+  sketch?: SketchStroke[];
+  checklist?: ChecklistItem[];
+  poll?: PostPoll;
   repostOfId?: string;
   editedAt?: number;
   createdAt: number;
@@ -86,6 +168,8 @@ export type Wall = {
   bannerFocus?: MediaFocus;
   accentColor?: string;
   actionButtons?: WallActionButton[];
+  privacyMode?: WallPrivacyMode;
+  invite?: WallInviteSettings;
   publishMode?: "open" | "owner";
 };
 
@@ -142,6 +226,7 @@ export type SocialState = {
   posts: Post[];
   comments: Comment[];
   utilityPositions: Record<string, PostPosition>;
+  postConnections: PostConnection[];
   follows: Follow[];
   savedPostIds: string[];
   pinnedPostIds: string[];

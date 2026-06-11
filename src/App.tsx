@@ -1,20 +1,28 @@
 import {
   AudioLines,
   ArrowLeft,
+  ArrowRight,
   Bell,
   Bookmark,
+  Bold,
+  Brush,
   Check,
+  CheckSquare,
   CirclePlus,
+  Code2,
   CornerDownRight,
   Clock,
   Download,
+  Eraser,
   Eye,
   Flag,
   Flame,
   House,
   Image as ImageIcon,
+  Italic,
   Loader2,
   Link2,
+  List,
   LogIn,
   LogOut,
   Map as MapIcon,
@@ -22,19 +30,33 @@ import {
   MoreHorizontal,
   Moon,
   PackagePlus,
+  Paperclip,
   Paintbrush,
+  Palette,
+  Pause,
   Pencil,
   Pin,
+  Play,
+  Plus,
+  Quote,
   Repeat2,
   Search,
   Send,
   Settings,
+  SkipBack,
+  SkipForward,
+  SlidersHorizontal,
   Sun,
   Trash2,
+  Type,
   Trophy,
   UserRound,
   Video,
+  Volume2,
+  VolumeX,
+  Vote,
   X,
+  Maximize2,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, ClipboardEvent, CSSProperties, FormEvent } from "react";
@@ -54,18 +76,28 @@ import { readSharedSocialState, writeSharedSocialState } from "./sharedState";
 import { readSocialState, readTheme, socialStateStorageKey, writeSocialState, writeTheme } from "./storage";
 import type {
   Comment,
+  ChecklistItem,
   MediaAttachment,
   MediaFocus,
   MediaKind,
   NotificationItem,
   PixelCell,
   Post,
+  PostAppearance,
+  PostConnection,
+  PostInteractionSettings,
+  PostKind,
   PostPosition,
+  PostPoll,
+  SketchPoint,
+  SketchStroke,
   SocialState,
   Theme,
   UserProfile,
   Wall,
   WallActionButton,
+  WallInviteSettings,
+  WallPrivacyMode,
 } from "./types";
 
 const timeFormatter = new Intl.RelativeTimeFormat("ru", { numeric: "auto" });
@@ -84,23 +116,37 @@ const minecraftAdminUserIds = new Set([
   "discord:476391268671291393",
 ]);
 const confettiPieces = 22;
-const reactionPieces = 24;
-const maxReactionBursts = 2;
-const reactionBurstCadenceMs = 90;
+const reactionPieces = 14;
+const maxReactionBursts = 3;
+const reactionBurstCadenceMs = 120;
 const reactionIdleMs = 1120;
-const reactionParticleLifetimeMs = 1320;
+const reactionParticleLifetimeMs = 980;
+const userOnlineWindowMs = 1000 * 60 * 2;
+const userRecentlySeenWindowMs = 1000 * 60 * 15;
 const socialStateWriteDelayMs = 180;
 const sharedStatePollMs = 1300;
 const postViewVisibleMs = 720;
 const profileWallPrefix = "profile:";
 const spaceSectionId = "space";
 const guestUserId = "guest";
+const anonymousGuestStorageKey = "kotleta.anonymous.guest.v1";
+const anonymousGuestPrefix = "guest:";
+const fieldLayoutStorageKey = "kotleta.field.layout.v1";
+const pinnedWallStorageKey = "kotleta.pinned.walls.v1";
 const boardGridSize = 24;
 const boardCardWidth = 318;
 const boardCardHeight = 226;
 const boardGap = 18;
 const defaultMediaFocus: MediaFocus = { x: 50, y: 50 };
-const wallAccentOptions = [
+type WallAccentOption = {
+  id: string;
+  label: string;
+  accent: string;
+  accent2: string;
+  soft: string;
+};
+
+const wallAccentOptions: WallAccentOption[] = [
   {
     id: "green",
     label: "Зелёный",
@@ -143,7 +189,7 @@ const wallAccentOptions = [
     accent2: "#5d6673",
     soft: "rgba(138, 147, 159, 0.16)",
   },
-] as const;
+];
 const pixelSize = 7;
 const pixelColumns = 300;
 const pixelRows = 190;
@@ -151,6 +197,29 @@ const maxPixelCells = pixelColumns * pixelRows;
 const pixelCooldownMs = 1000;
 const pixelSyncChannelName = "kotleta.pixel.v1";
 const pixelPalette = ["#111318", "#f6f8f7", "#21e69a", "#0f9f68", "#6c7685", "#5c6cff", "#d93862"];
+const sketchPalette = ["#111318", "#f6f8f7", "#21e69a", "#0f9f68", "#6c7685", "#5c6cff", "#d93862", "#f2c94c"];
+const postKindOptions: Array<{ id: PostKind; label: string; hint: string }> = [
+  { id: "note", label: "Заметка", hint: "текст" },
+  { id: "sketch", label: "Рисунок", hint: "рисование" },
+  { id: "idea", label: "Идея", hint: "набросок" },
+  { id: "list", label: "Список", hint: "пункты" },
+  { id: "poll", label: "Голосование", hint: "выбор" },
+  { id: "checklist", label: "Список", hint: "пункты" },
+  { id: "link", label: "Ссылка", hint: "переход" },
+  { id: "signal", label: "Сигнал", hint: "важное" },
+];
+const defaultPostSettings: PostInteractionSettings = {
+  comments: true,
+  reactions: true,
+  reposts: true,
+  saves: true,
+  views: true,
+};
+const defaultPostAppearance: PostAppearance = {
+  background: "plain",
+  shape: "soft",
+  size: "normal",
+};
 
 type ConfettiKind = "auth" | "wall" | "post" | "pack";
 
@@ -178,6 +247,21 @@ type BoardRect = {
   y: number;
 };
 
+type BoardLayoutOptions = {
+  defaultOffsetX?: number;
+  defaultOffsetY?: number;
+  maxX?: number;
+  positionOverrides?: Record<string, PostPosition>;
+  usePostPositions?: boolean;
+};
+
+type BoardLayoutItem = {
+  height: number;
+  position: PostPosition;
+  post: Post;
+  width: number;
+};
+
 type AppRoute =
   | { view: "feed" }
   | { view: "top" }
@@ -190,11 +274,29 @@ type AppRoute =
 type FeedFilter = "all" | "following" | "saved";
 type ObjectKind = "note" | "branch" | "media" | "audio" | "fork";
 
+type PostDraftOptions = {
+  appearance: PostAppearance;
+  checklist: ChecklistItem[];
+  kind: PostKind;
+  poll?: PostPoll;
+  settings: PostInteractionSettings;
+  sketch: SketchStroke[];
+};
+
+type PostUpdatePayload = Partial<PostDraftOptions>;
+
 type CreateSpacePayload = {
+  accentColor: string;
+  avatarFocus: MediaFocus;
+  avatarUrl: string;
+  bannerFocus: MediaFocus;
+  bannerUrl: string;
   name: string;
   slug: string;
   description: string;
   rules: string;
+  privacyMode: WallPrivacyMode;
+  invite: WallInviteSettings;
   publishMode: Wall["publishMode"];
 };
 
@@ -208,6 +310,8 @@ type WallSettingsPayload = {
   description: string;
   name: string;
   rules: string;
+  privacyMode: WallPrivacyMode;
+  invite: WallInviteSettings;
   publishMode: Wall["publishMode"];
 };
 
@@ -218,9 +322,14 @@ type AppNavItem = {
   view: AppRoute["view"];
 };
 
+type FieldLayoutState = Record<string, Record<string, PostPosition>>;
+type PinnedWallState = Record<string, string[]>;
+
 function App() {
   const [theme, setTheme] = useState<Theme>(() => readTheme());
   const [state, setState] = useState<SocialState>(() => normalizeLocalSession(readSocialState()));
+  const [fieldLayouts, setFieldLayouts] = useState<FieldLayoutState>(() => readFieldLayouts());
+  const [pinnedWalls, setPinnedWalls] = useState<PinnedWallState>(() => readPinnedWalls());
   const [route, setRoute] = useState<AppRoute>(() =>
     readRouteFromPath(window.location.pathname, state.users, state.walls),
   );
@@ -233,6 +342,7 @@ function App() {
   const [isCreateSpaceOpen, setIsCreateSpaceOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [settingsWallId, setSettingsWallId] = useState<string | null>(null);
+  const [connectionSourcePostId, setConnectionSourcePostId] = useState<string | null>(null);
   const latestSocialStateRef = useRef(state);
   const pixelBroadcastRef = useRef<BroadcastChannel | null>(null);
   const pixelClientIdRef = useRef(crypto.randomUUID());
@@ -266,7 +376,7 @@ function App() {
 
     return map;
   }, [state.comments, state.hiddenCommentIds]);
-  const activeUser = userById.get(state.activeUserId) ?? userById.get(guestUserId);
+  const activeUser = userById.get(state.activeUserId) ?? userById.get(getAnonymousGuestUser().id) ?? userById.get(guestUserId);
   const isDiscordUser = activeUser?.provider === "discord";
   const spaces = useMemo(() => state.walls.filter(isSpaceWall), [state.walls]);
   const wallById = useMemo(
@@ -284,14 +394,39 @@ function App() {
     () => new Set(state.follows.filter((follow) => follow.targetType === "wall").map((follow) => follow.targetId)),
     [state.follows],
   );
-  const unreadNotifications = useMemo(
-    () => state.notifications.filter((item) => item.recipientId === state.activeUserId && !item.readAt),
+  const activeInviteCode = useMemo(
+    () => new URLSearchParams(window.location.search).get("invite") ?? "",
+    [route],
+  );
+  const visibleSpaces = useMemo(
+    () => spaces.filter((space) => canViewWall(space, activeUser?.id, followedWallIds, activeInviteCode)),
+    [activeInviteCode, activeUser?.id, followedWallIds, spaces],
+  );
+  const unreadNotificationCount = useMemo(
+    () => stackNotificationItems(state.notifications.filter((item) => item.recipientId === state.activeUserId && !item.readAt)).length,
     [state.activeUserId, state.notifications],
   );
+  const fieldLayoutKey = activeUser?.id ?? getAnonymousGuestUser().id;
+  const fieldPostPositions = fieldLayouts[fieldLayoutKey] ?? {};
+  const pinnedWallIds = useMemo(() => pinnedWalls[fieldLayoutKey] ?? [], [fieldLayoutKey, pinnedWalls]);
+  const pinnedWallIdSet = useMemo(() => new Set(pinnedWallIds), [pinnedWallIds]);
+  const sidebarSpaces = useMemo(() => {
+    const byId = new Map(visibleSpaces.map((space) => [space.id, space]));
+    const pinnedSpaces = pinnedWallIds
+      .map((id) => byId.get(id))
+      .filter((space): space is Wall => Boolean(space));
+    const fallbackSpaces = visibleSpaces.filter((space) => !pinnedWallIdSet.has(space.id));
+
+    return [...pinnedSpaces, ...fallbackSpaces].slice(0, 4);
+  }, [pinnedWallIdSet, pinnedWallIds, visibleSpaces]);
   const activeProfile =
     route.view === "profile" ? userById.get(route.profileId) ?? activeUser : activeUser;
   const activeSpace =
-    route.view === "space" ? state.walls.find((wall) => wall.id === route.spaceId) : undefined;
+    route.view === "space"
+      ? state.walls.find((wall) =>
+          wall.id === route.spaceId && canViewWall(wall, activeUser?.id, followedWallIds, activeInviteCode),
+        )
+      : undefined;
   const activePost = route.view === "post" ? postById.get(route.postId) : undefined;
   const settingsWall = settingsWallId ? wallById.get(settingsWallId) : undefined;
   const activeProfileWall = activeProfile ? wallById.get(getProfileWallId(activeProfile.id)) : undefined;
@@ -314,10 +449,10 @@ function App() {
   const matchingSpaces = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     if (!normalizedQuery) return [];
-    return spaces
+    return visibleSpaces
       .filter((space) => `${space.name} ${space.description ?? ""} ${space.rules ?? ""}`.toLowerCase().includes(normalizedQuery))
       .slice(0, 4);
-  }, [query, spaces]);
+  }, [query, visibleSpaces]);
 
   const visibleFeedPosts = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -328,13 +463,12 @@ function App() {
         const wall = wallById.get(post.wallId);
         const haystack = `${post.text} ${author?.name ?? ""} ${author?.handle ?? ""} ${wall?.name ?? ""}`.toLowerCase();
         if (hiddenPostIds.has(post.id)) return false;
+        if (wall && isSpaceWall(wall) && !canViewWall(wall, activeUser?.id, followedWallIds, activeInviteCode)) return false;
         if (normalizedQuery && !haystack.includes(normalizedQuery)) return false;
         if (feedFilter === "following") return followedUserIds.has(post.authorId) || followedWallIds.has(post.wallId);
         if (feedFilter === "saved") return savedPostIds.has(post.id);
-        if (!normalizedQuery && !post.wallId.startsWith(profileWallPrefix)) return false;
-        return `${post.text} ${author?.name ?? ""} ${author?.handle ?? ""}`
-          .toLowerCase()
-          .includes(normalizedQuery);
+        if (!normalizedQuery && post.id === minecraftDownloadPostId) return false;
+        return true;
       })
       .sort((a, b) => {
         const pinnedDelta = Number(pinnedPostIds.has(b.id)) - Number(pinnedPostIds.has(a.id));
@@ -343,6 +477,8 @@ function App() {
       });
   }, [
     feedFilter,
+    activeInviteCode,
+    activeUser?.id,
     followedUserIds,
     followedWallIds,
     hiddenPostIds,
@@ -360,7 +496,6 @@ function App() {
 
     sharedStateVersionRef.current = snapshot.version;
     if (snapshot.conflict) {
-      skipNextSharedStateWriteRef.current = true;
       setState((current) => mergeSharedStateWithLocalSession(current, snapshot.state));
     }
   }, []);
@@ -369,6 +504,18 @@ function App() {
     document.documentElement.dataset.theme = theme;
     writeTheme(theme);
   }, [theme]);
+
+  useEffect(() => {
+    writeFieldLayouts(fieldLayouts);
+  }, [fieldLayouts]);
+
+  useEffect(() => {
+    writePinnedWalls(pinnedWalls);
+  }, [pinnedWalls]);
+
+  useEffect(() => {
+    setState((current) => touchActiveUserPresence(current));
+  }, [activeUser?.id]);
 
   useEffect(() => {
     setState((current) => normalizeRuntimeBoardCopy(current));
@@ -535,7 +682,7 @@ function App() {
 
   useEffect(() => {
     const first = window.location.pathname.split("/").filter(Boolean)[0]?.toLowerCase();
-    if (!first || first === "main" || first === "agents") {
+    if (!first || first === "main") {
       window.history.replaceState(null, "", "/feed");
     }
   }, []);
@@ -550,14 +697,7 @@ function App() {
   useEffect(() => {
     const interval = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
-      setState((current) => ({
-        ...current,
-        users: current.users.map((user) =>
-          user.id === current.activeUserId
-            ? { ...user, timeOnSiteMinutes: user.timeOnSiteMinutes + 1 }
-            : user,
-        ),
-      }));
+      setState((current) => touchActiveUserPresence(current, Date.now(), 1));
     }, 60000);
     return () => window.clearInterval(interval);
   }, []);
@@ -614,8 +754,8 @@ function App() {
     navigate({ view: "feed" });
     setState((current) => ({
       ...current,
-      users: ensureGuestUser(current.users),
-      activeUserId: guestUserId,
+      users: ensureLocalGuestUsers(current.users),
+      activeUserId: getAnonymousGuestUser().id,
     }));
   }
 
@@ -628,8 +768,15 @@ function App() {
       siteSectionId: spaceSectionId,
       name: payload.name.trim(),
       ownerId: activeUser?.id,
+      avatarFocus: payload.avatarFocus,
+      avatarUrl: payload.avatarUrl.trim() || undefined,
+      bannerFocus: payload.bannerFocus,
+      bannerUrl: payload.bannerUrl.trim() || undefined,
+      accentColor: payload.accentColor || undefined,
       description: payload.description.trim(),
       rules: payload.rules.trim(),
+      privacyMode: payload.privacyMode,
+      invite: payload.privacyMode === "public" ? undefined : normalizeWallInviteSettings(payload.invite),
       publishMode: payload.publishMode,
     };
 
@@ -641,9 +788,41 @@ function App() {
     celebrate("wall");
   }
 
-  function publishPostToWall(wallId: string | undefined, text: string, attachments: MediaAttachment[]) {
-    if (!wallId || !activeUser || (!text.trim() && attachments.length === 0)) return;
-    const position = getNewBoardPostPosition(state.posts.filter((post) => post.wallId === wallId));
+  function togglePinnedWall(wallId: string) {
+    setPinnedWalls((current) => {
+      const currentList = current[fieldLayoutKey] ?? [];
+      const nextList = currentList.includes(wallId)
+        ? currentList.filter((id) => id !== wallId)
+        : [wallId, ...currentList].slice(0, 12);
+      const nextState = { ...current };
+
+      if (nextList.length > 0) {
+        nextState[fieldLayoutKey] = nextList;
+      } else {
+        delete nextState[fieldLayoutKey];
+      }
+
+      return nextState;
+    });
+  }
+
+  function publishPostToWall(
+    wallId: string | undefined,
+    text: string,
+    attachments: MediaAttachment[],
+    options?: Partial<PostDraftOptions>,
+  ) {
+    if (!wallId || !activeUser) return;
+    const postOptions = normalizePostDraftOptions(options, attachments);
+    if (!hasPublishablePostDraft(text, attachments, postOptions)) return;
+    const position = getNewBoardPostPosition(state.posts.filter((post) => post.wallId === wallId), {
+      appearance: postOptions.appearance,
+      attachments,
+      checklist: postOptions.checklist,
+      poll: postOptions.poll,
+      sketch: postOptions.sketch,
+      text: text.trim(),
+    });
 
     setState((current) => {
       const walls = ensureWallExists(current.walls, wallId, current.users);
@@ -654,6 +833,7 @@ function App() {
         id: crypto.randomUUID(),
         wallId,
         authorId: activeUser.id,
+        kind: postOptions.kind,
         text: text.trim(),
         attachments,
         reactions: 0,
@@ -662,6 +842,11 @@ function App() {
           uniqueUserIds: [],
         },
         position,
+        appearance: postOptions.appearance,
+        settings: postOptions.settings,
+        sketch: postOptions.sketch,
+        checklist: postOptions.checklist,
+        poll: postOptions.poll,
         createdAt: Date.now(),
       };
 
@@ -685,19 +870,40 @@ function App() {
   }
 
   function movePost(postId: string, x: number, y: number) {
-    setState((current) => ({
+    setState((current) => {
+      const targetPost = current.posts.find((post) => post.id === postId);
+      if (!canMoveSharedPost(targetPost, current.walls, current.activeUserId)) return current;
+
+      return {
+        ...current,
+        posts: current.posts.map((post) =>
+          post.id === postId
+            ? {
+                ...post,
+                position: clampPostPosition({
+                  x: Math.round(x / boardGridSize) * boardGridSize,
+                  y: Math.round(y / boardGridSize) * boardGridSize,
+                }),
+              }
+            : post,
+        ),
+      };
+    });
+  }
+
+  function moveFieldPost(postId: string, x: number, y: number) {
+    if (!fieldLayoutKey) return;
+    const position = clampPostPosition({
+      x: Math.round(x / boardGridSize) * boardGridSize,
+      y: Math.round(y / boardGridSize) * boardGridSize,
+    });
+
+    setFieldLayouts((current) => ({
       ...current,
-      posts: current.posts.map((post) =>
-        post.id === postId
-          ? {
-              ...post,
-              position: clampPostPosition({
-                x: Math.round(x / boardGridSize) * boardGridSize,
-                y: Math.round(y / boardGridSize) * boardGridSize,
-              }),
-            }
-          : post,
-      ),
+      [fieldLayoutKey]: {
+        ...(current[fieldLayoutKey] ?? {}),
+        [postId]: position,
+      },
     }));
   }
 
@@ -739,22 +945,29 @@ function App() {
     const reactionAmount = Math.max(0, Math.floor(amount));
     if (reactionAmount === 0) return;
 
-    setState((current) => ({
-      ...current,
-      posts: current.posts.map((post) =>
-        post.id === postId ? { ...post, reactions: post.reactions + reactionAmount } : post,
-      ),
-      notifications: addPostNotification(current, {
-        kind: "reaction",
-        actorId: current.activeUserId,
-        postId,
-        text: `Новый огонёк ×${reactionAmount}`,
-      }),
-    }));
+    setState((current) => {
+      const targetPost = current.posts.find((post) => post.id === postId);
+      if (!targetPost || !getPostSettings(targetPost).reactions) return current;
+
+      return {
+        ...current,
+        posts: current.posts.map((post) =>
+          post.id === postId ? { ...post, reactions: post.reactions + reactionAmount } : post,
+        ),
+        notifications: addPostNotification(current, {
+          kind: "reaction",
+          actorId: current.activeUserId,
+          postId,
+          text: `Новый огонёк ×${reactionAmount}`,
+        }),
+      };
+    });
   }, []);
 
   const recordPostView = useCallback((postId: string) => {
     const current = latestSocialStateRef.current;
+    const targetPost = current.posts.find((post) => post.id === postId);
+    if (!targetPost || !getPostSettings(targetPost).views) return;
     const viewerId = current.activeUserId;
     const key = `${viewerId}:${postId}`;
     if (viewedPostKeysRef.current.has(key)) return;
@@ -781,7 +994,8 @@ function App() {
   function addComment(postId: string, parentId: string | undefined, text: string, attachments: MediaAttachment[]) {
     if (!activeUser || (!text.trim() && attachments.length === 0)) return;
     const parentComment = parentId ? latestSocialStateRef.current.comments.find((comment) => comment.id === parentId) : undefined;
-    if (!postById.has(postId)) return;
+    const targetPost = postById.get(postId);
+    if (!targetPost || !getPostSettings(targetPost).comments) return;
     if (parentId && (!parentComment || parentComment.postId !== postId)) return;
 
     const comment: Comment = {
@@ -885,11 +1099,23 @@ function App() {
     }));
   }
 
-  function editPost(postId: string, text: string) {
+  function editPost(postId: string, text: string, options?: PostUpdatePayload) {
     setState((current) => ({
       ...current,
       posts: current.posts.map((post) =>
-        post.id === postId ? { ...post, text: text.trim(), editedAt: Date.now() } : post,
+        post.id === postId
+          ? {
+              ...post,
+              text: text.trim(),
+              ...(options?.kind ? { kind: options.kind } : {}),
+              ...(options?.appearance ? { appearance: options.appearance } : {}),
+              ...(options?.settings ? { settings: options.settings } : {}),
+              ...(options?.sketch ? { sketch: options.sketch } : {}),
+              ...(options?.checklist ? { checklist: options.checklist } : {}),
+              ...(Object.prototype.hasOwnProperty.call(options ?? {}, "poll") ? { poll: options?.poll } : {}),
+              editedAt: Date.now(),
+            }
+          : post,
       ),
     }));
   }
@@ -899,6 +1125,9 @@ function App() {
       ...current,
       posts: current.posts.filter((post) => post.id !== postId),
       comments: current.comments.filter((comment) => comment.postId !== postId),
+      postConnections: current.postConnections.filter(
+        (connection) => connection.fromPostId !== postId && connection.toPostId !== postId,
+      ),
       savedPostIds: current.savedPostIds.filter((id) => id !== postId),
       pinnedPostIds: current.pinnedPostIds.filter((id) => id !== postId),
       hiddenPostIds: current.hiddenPostIds.filter((id) => id !== postId),
@@ -912,18 +1141,25 @@ function App() {
   }
 
   function togglePinnedPost(postId: string) {
-    setState((current) => ({
-      ...current,
-      pinnedPostIds: current.pinnedPostIds.includes(postId)
-        ? current.pinnedPostIds.filter((id) => id !== postId)
-        : [postId, ...current.pinnedPostIds],
-    }));
+    setState((current) => {
+      const post = current.posts.find((item) => item.id === postId);
+      if (!post || post.authorId !== current.activeUserId) return current;
+
+      return {
+        ...current,
+        pinnedPostIds: current.pinnedPostIds.includes(postId)
+          ? current.pinnedPostIds.filter((id) => id !== postId)
+          : [postId, ...current.pinnedPostIds],
+      };
+    });
   }
 
   function toggleSavedPost(postId: string) {
     setState((current) => ({
       ...current,
-      savedPostIds: current.savedPostIds.includes(postId)
+      savedPostIds: !getPostSettings(current.posts.find((post) => post.id === postId)).saves
+        ? current.savedPostIds
+        : current.savedPostIds.includes(postId)
         ? current.savedPostIds.filter((id) => id !== postId)
         : [postId, ...current.savedPostIds],
     }));
@@ -932,10 +1168,15 @@ function App() {
   function repostPost(postId: string) {
     const sourcePost = getRepostSourcePost(postById.get(postId), postById);
     if (!activeUser || !sourcePost) return;
+    if (!getPostSettings(sourcePost).reposts) return;
     if (hasUserRepostedPost(sourcePost.id, activeUser.id, postById)) return;
 
     const wallId = getProfileWallId(activeUser.id);
-    const position = getNewBoardPostPosition(state.posts.filter((post) => post.wallId === wallId));
+    const position = getNewBoardPostPosition(state.posts.filter((post) => post.wallId === wallId), {
+      attachments: [],
+      repostOfId: sourcePost.id,
+      text: "",
+    });
     const repost: Post = {
       id: crypto.randomUUID(),
       wallId,
@@ -969,6 +1210,121 @@ function App() {
       };
     });
     celebrate("post");
+  }
+
+  function toggleChecklistItem(postId: string, itemId: string) {
+    if (!activeUser) return;
+
+    setState((current) => ({
+      ...current,
+      posts: current.posts.map((post) => {
+        if (post.id !== postId || !post.checklist) return post;
+
+        return {
+          ...post,
+          checklist: post.checklist.map((item) => {
+            if (item.id !== itemId) return item;
+            const isChecked = item.checkedBy.includes(current.activeUserId);
+            return {
+              ...item,
+              checkedBy: isChecked
+                ? item.checkedBy.filter((id) => id !== current.activeUserId)
+                : [...item.checkedBy, current.activeUserId],
+            };
+          }),
+        };
+      }),
+    }));
+  }
+
+  function voteInPoll(postId: string, optionId: string) {
+    if (!activeUser) return;
+
+    setState((current) => ({
+      ...current,
+      posts: current.posts.map((post) => {
+        if (post.id !== postId || !post.poll) return post;
+        const hasVotedOption = post.poll.options.some((option) =>
+          option.id === optionId && option.voterIds.includes(current.activeUserId),
+        );
+
+        return {
+          ...post,
+          poll: {
+            ...post.poll,
+            options: post.poll.options.map((option) => {
+              if (post.poll?.multi) {
+                if (option.id !== optionId) return option;
+                return {
+                  ...option,
+                  voterIds: hasVotedOption
+                    ? option.voterIds.filter((id) => id !== current.activeUserId)
+                    : [...option.voterIds, current.activeUserId],
+                };
+              }
+
+              if (option.id === optionId) {
+                return {
+                  ...option,
+                  voterIds: hasVotedOption
+                    ? option.voterIds.filter((id) => id !== current.activeUserId)
+                    : Array.from(new Set([...option.voterIds, current.activeUserId])),
+                };
+              }
+
+              return {
+                ...option,
+                voterIds: option.voterIds.filter((id) => id !== current.activeUserId),
+              };
+            }),
+          },
+        };
+      }),
+    }));
+  }
+
+  function startPostConnection(postId: string) {
+    setConnectionSourcePostId(postId);
+  }
+
+  function finishPostConnection(postId: string) {
+    if (!activeUser || !connectionSourcePostId || connectionSourcePostId === postId) {
+      setConnectionSourcePostId(null);
+      return;
+    }
+
+    setState((current) => {
+      const toPost = current.posts.find((post) => post.id === postId);
+      const fromPost = current.posts.find((post) => post.id === connectionSourcePostId);
+      if (!fromPost || !toPost) return current;
+
+      const exists = current.postConnections.some(
+        (connection) => connection.fromPostId === connectionSourcePostId && connection.toPostId === postId,
+      );
+      if (exists) return current;
+
+      return {
+        ...current,
+        postConnections: [
+          {
+            id: crypto.randomUUID(),
+            fromPostId: connectionSourcePostId,
+            toPostId: postId,
+            authorId: activeUser.id,
+            createdAt: Date.now(),
+          },
+          ...current.postConnections,
+        ],
+      };
+    });
+    setConnectionSourcePostId(null);
+  }
+
+  function deletePostConnection(connectionId: string) {
+    setState((current) => ({
+      ...current,
+      postConnections: current.postConnections.filter((connection) => connection.id !== connectionId),
+    }));
   }
 
   function reportPost(postId: string, reason = "Жалоба") {
@@ -1041,6 +1397,8 @@ function App() {
               description: payload.description.trim(),
               name: payload.name.trim(),
               rules: payload.rules.trim(),
+              privacyMode: payload.privacyMode,
+              invite: payload.privacyMode === "public" ? undefined : normalizeWallInviteSettings(payload.invite),
               publishMode: payload.publishMode,
             }
           : wall,
@@ -1064,6 +1422,9 @@ function App() {
         walls: current.walls.filter((item) => item.id !== wallId),
         posts: current.posts.filter((post) => post.wallId !== wallId),
         comments: current.comments.filter((comment) => !postIds.has(comment.postId)),
+        postConnections: current.postConnections.filter(
+          (connection) => !postIds.has(connection.fromPostId) && !postIds.has(connection.toPostId),
+        ),
         follows: current.follows.filter((follow) => follow.targetType !== "wall" || follow.targetId !== wallId),
         savedPostIds: current.savedPostIds.filter((postId) => !postIds.has(postId)),
         pinnedPostIds: current.pinnedPostIds.filter((postId) => !postIds.has(postId)),
@@ -1102,7 +1463,7 @@ function App() {
   ];
 
   return (
-    <div className={route.view === "post" ? "shell shell--post" : "shell"} style={shellAccentStyle}>
+    <div className="shell" style={shellAccentStyle}>
       <PixelBattleLayer
         activeUserId={activeUser?.id}
         cells={state.pixelCells}
@@ -1144,7 +1505,7 @@ function App() {
             <CirclePlus size={15} />
             Новая доска
           </button>
-          {spaces.slice(0, 4).map((space) => (
+          {sidebarSpaces.map((space) => (
             <button
               key={space.id}
               className={route.view === "space" && route.spaceId === space.id ? "active" : ""}
@@ -1161,7 +1522,7 @@ function App() {
               <Avatar user={activeUser} />
               <span>
                 <strong>{activeUser.name}</strong>
-                <small>{getUserStatus(activeUser)}</small>
+                <UserStatusLabel forceOnline user={activeUser} />
               </span>
             </button>
             {isDiscordUser ? (
@@ -1184,7 +1545,7 @@ function App() {
             activeUserId={activeUser.id}
             isOpen={isNotificationsOpen}
             notifications={state.notifications}
-            unreadCount={unreadNotifications.length}
+            unreadCount={unreadNotificationCount}
             userById={userById}
             onNavigatePost={(postId) => navigate({ view: "post", postId })}
             onToggle={() => {
@@ -1231,9 +1592,13 @@ function App() {
             matchingSpaces={matchingSpaces}
             matchingUsers={matchingUsers}
             hasSearch={query.trim().length > 0}
-            spaces={spaces}
+            followedWallIds={followedWallIds}
+            spaces={visibleSpaces}
             activeUserId={activeUser?.id}
             commentsByPostId={commentsByPostId}
+            connectionSourcePostId={connectionSourcePostId}
+            postPositions={fieldPostPositions}
+            postConnections={state.postConnections}
             postById={postById}
             pinnedPostIds={pinnedPostIds}
             savedPostIds={savedPostIds}
@@ -1241,22 +1606,27 @@ function App() {
             wallById={wallById}
             onCreateSpace={() => setIsCreateSpaceOpen(true)}
             onDeletePost={deletePost}
+            onDeletePostConnection={deletePostConnection}
             onEditPost={editPost}
+            onFinishPostConnection={finishPostConnection}
             onFilterChange={setFeedFilter}
             onHidePost={hidePost}
-            onMovePost={movePost}
+            onMovePost={moveFieldPost}
             onOpenPost={(postId) => navigate({ view: "post", postId })}
             onOpenProfile={openProfile}
             onOpenSpace={(spaceId) => navigate({ view: "space", spaceId })}
             onPinPost={togglePinnedPost}
-            onPublish={(text, attachments) =>
-              publishPostToWall(getProfileWallId(activeUser?.id ?? ""), text, attachments)
+            onPublish={(text, attachments, options) =>
+              publishPostToWall(getProfileWallId(activeUser?.id ?? ""), text, attachments, options)
             }
             onReact={react}
             onRecordView={recordPostView}
             onReportPost={reportPost}
             onRepost={repostPost}
+            onStartPostConnection={startPostConnection}
+            onToggleChecklistItem={toggleChecklistItem}
             onToggleSave={toggleSavedPost}
+            onVotePoll={voteInPoll}
           />
         ) : null}
 
@@ -1282,7 +1652,7 @@ function App() {
 
         {route.view === "spaceBoards" ? (
           <CommunityBoardsPage
-            spaces={spaces}
+            spaces={visibleSpaces}
             onCreateSpace={() => setIsCreateSpaceOpen(true)}
             onOpenFeed={() => navigate({ view: "feed" })}
             onOpenSpace={(spaceId) => navigate({ view: "space", spaceId })}
@@ -1293,8 +1663,10 @@ function App() {
           <ProfilePage
             activeUser={activeUser}
             commentsByPostId={commentsByPostId}
+            connectionSourcePostId={connectionSourcePostId}
             followedUserIds={followedUserIds}
             pinnedPostIds={pinnedPostIds}
+            postConnections={state.postConnections}
             postById={postById}
             posts={state.posts.filter((post) => !hiddenPostIds.has(post.id))}
             savedPostIds={savedPostIds}
@@ -1303,22 +1675,27 @@ function App() {
             profileWall={activeProfileWall}
             wallById={wallById}
             onDeletePost={deletePost}
+            onDeletePostConnection={deletePostConnection}
             onEditPost={editPost}
+            onFinishPostConnection={finishPostConnection}
             onFollow={(userId) => toggleFollow("user", userId)}
             onHidePost={hidePost}
             onOpenPost={(postId) => navigate({ view: "post", postId })}
             onOpenProfile={openProfile}
             onOpenSettings={() => openWallSettings(getProfileWallId(activeProfile?.id ?? ""))}
             onPinPost={togglePinnedPost}
-            onPublish={(text, attachments) =>
-              publishPostToWall(getProfileWallId(activeProfile?.id ?? ""), text, attachments)
+            onPublish={(text, attachments, options) =>
+              publishPostToWall(getProfileWallId(activeProfile?.id ?? ""), text, attachments, options)
             }
             onMovePost={movePost}
             onReact={react}
             onRecordView={recordPostView}
             onReportPost={reportPost}
             onRepost={repostPost}
+            onStartPostConnection={startPostConnection}
+            onToggleChecklistItem={toggleChecklistItem}
             onToggleSave={toggleSavedPost}
+            onVotePoll={voteInPoll}
           />
         ) : null}
 
@@ -1326,8 +1703,11 @@ function App() {
           <SpacePage
             activeUser={activeUser}
             commentsByPostId={commentsByPostId}
+            connectionSourcePostId={connectionSourcePostId}
             followedWallIds={followedWallIds}
             pinnedPostIds={pinnedPostIds}
+            pinnedWallIds={pinnedWallIdSet}
+            postConnections={state.postConnections}
             postById={postById}
             posts={state.posts.filter((post) => post.wallId === activeSpace?.id && !hiddenPostIds.has(post.id))}
             savedPostIds={savedPostIds}
@@ -1336,20 +1716,26 @@ function App() {
             wallById={wallById}
             onCreateSpace={() => setIsCreateSpaceOpen(true)}
             onDeletePost={deletePost}
+            onDeletePostConnection={deletePostConnection}
             onEditPost={editPost}
+            onFinishPostConnection={finishPostConnection}
             onFollow={(wallId) => toggleFollow("wall", wallId)}
             onHidePost={hidePost}
             onOpenPost={(postId) => navigate({ view: "post", postId })}
             onOpenProfile={openProfile}
             onOpenSettings={openWallSettings}
             onPinPost={togglePinnedPost}
-            onPublish={(text, attachments) => publishPostToWall(activeSpace?.id, text, attachments)}
+            onTogglePinnedWall={togglePinnedWall}
+            onPublish={(text, attachments, options) => publishPostToWall(activeSpace?.id, text, attachments, options)}
             onMovePost={movePost}
             onReact={react}
             onRecordView={recordPostView}
             onReportPost={reportPost}
             onRepost={repostPost}
+            onStartPostConnection={startPostConnection}
+            onToggleChecklistItem={toggleChecklistItem}
             onToggleSave={toggleSavedPost}
+            onVotePoll={voteInPoll}
           />
         ) : null}
 
@@ -1379,7 +1765,9 @@ function App() {
             onReportComment={reportComment}
             onReportPost={reportPost}
             onRepost={repostPost}
+            onToggleChecklistItem={toggleChecklistItem}
             onToggleSave={toggleSavedPost}
+            onVotePoll={voteInPoll}
           />
         ) : null}
       </main>
@@ -1388,13 +1776,6 @@ function App() {
         activeRoute={route}
         activeUser={activeUser}
         navItems={navItems}
-        unreadCount={unreadNotifications.length}
-        onCreateSpace={() => setIsCreateSpaceOpen(true)}
-        onToggleNotifications={() => {
-          setIsNotificationsOpen((value) => !value);
-          markNotificationsRead();
-        }}
-        onToggleSearch={() => setIsMobileSearchOpen((value) => !value)}
         onOpenProfile={openProfile}
         onNavigate={navigate}
       />
@@ -1413,7 +1794,7 @@ function App() {
         <MobileComposerSheet
           targetLabel={getComposerTargetLabel(composerTargetWallId, wallById, userById, activeUser)}
           onClose={() => setIsMobileComposerOpen(false)}
-          onPublish={(text, attachments) => publishPostToWall(composerTargetWallId, text, attachments)}
+          onPublish={(text, attachments, options) => publishPostToWall(composerTargetWallId, text, attachments, options)}
         />
       ) : null}
 
@@ -1455,6 +1836,11 @@ function AuthControls({
   );
 }
 
+type StackedNotificationItem = NotificationItem & {
+  stackCount: number;
+  stackText: string;
+};
+
 function NotificationCenter({
   activeUserId,
   isOpen,
@@ -1472,8 +1858,9 @@ function NotificationCenter({
   onNavigatePost: (postId: string) => void;
   onToggle: () => void;
 }) {
-  const visibleNotifications = notifications
-    .filter((item) => item.recipientId === activeUserId)
+  const visibleNotifications = stackNotificationItems(
+    notifications.filter((item) => item.recipientId === activeUserId),
+  )
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, 8);
 
@@ -1499,7 +1886,7 @@ function NotificationCenter({
                   onClick={() => item.postId ? onNavigatePost(item.postId) : undefined}
                 >
                   <span>{actor?.name ?? "Пользователь"}</span>
-                  <strong>{item.text}</strong>
+                  <strong>{formatStackedNotificationText(item)}</strong>
                   <small>{formatRelativeTime(item.createdAt)}</small>
                 </button>
               );
@@ -1509,6 +1896,55 @@ function NotificationCenter({
       ) : null}
     </section>
   );
+}
+
+function stackNotificationItems(items: NotificationItem[]): StackedNotificationItem[] {
+  const groups = new Map<string, StackedNotificationItem>();
+
+  for (const item of items) {
+    const parsed = parseNotificationStackText(item.text);
+    const key = [
+      item.recipientId,
+      item.actorId,
+      item.kind,
+      item.postId ?? "",
+      item.commentId ?? "",
+      parsed.text,
+    ].join("|");
+    const existing = groups.get(key);
+
+    if (!existing) {
+      groups.set(key, {
+        ...item,
+        stackCount: parsed.count,
+        stackText: parsed.text,
+      });
+      continue;
+    }
+
+    existing.stackCount += parsed.count;
+    if (item.createdAt > existing.createdAt) {
+      existing.id = item.id;
+      existing.createdAt = item.createdAt;
+      existing.readAt = item.readAt;
+    } else if (!item.readAt) {
+      existing.readAt = undefined;
+    }
+  }
+
+  return Array.from(groups.values());
+}
+
+function parseNotificationStackText(text: string): { count: number; text: string } {
+  const match = text.match(/\s+×(\d+)$/);
+  return {
+    count: match ? Math.max(1, Number(match[1]) || 1) : 1,
+    text: text.replace(/\s+×\d+$/, ""),
+  };
+}
+
+function formatStackedNotificationText(item: StackedNotificationItem): string {
+  return item.stackCount > 1 ? `${item.stackText} ×${item.stackCount}` : item.stackText;
 }
 
 function PixelBattleLayer({
@@ -1598,7 +2034,13 @@ function PixelBattleLayer({
           <Paintbrush size={17} />
         </button>
         {isPainting ? (
-          <div className="pixel-popover">
+          <div className="pixel-popover" role="dialog" aria-label="Палитра пикселей">
+            <div className="pixel-popover-head">
+              <span>Пиксель</span>
+              <button className="pixel-close" onClick={() => setIsPainting(false)} aria-label="Закрыть палитру">
+                <X size={15} />
+              </button>
+            </div>
             <div className="pixel-palette" aria-label="Цвета пикселей">
               {pixelPalette.map((color) => (
                 <button
@@ -1610,8 +2052,9 @@ function PixelBattleLayer({
                 />
               ))}
             </div>
-            <span className={cooldownLeft > 0 ? "pixel-cooldown locked" : "pixel-cooldown"}>
-              {cooldownLeft > 0 ? `${Math.ceil(cooldownLeft / 1000)}с` : "готово"}
+            <span className={cooldownLeft > 0 ? "pixel-cooldown locked" : "pixel-cooldown"} aria-live="polite">
+              <i />
+              {cooldownLeft > 0 ? `пауза ${Math.ceil(cooldownLeft / 1000)}с` : "можно ставить"}
             </span>
           </div>
         ) : null}
@@ -1624,20 +2067,12 @@ function MobileBottomNav({
   activeRoute,
   activeUser,
   navItems,
-  unreadCount,
-  onCreateSpace,
-  onToggleNotifications,
-  onToggleSearch,
   onOpenProfile,
   onNavigate,
 }: {
   activeRoute: AppRoute;
   activeUser: UserProfile | undefined;
   navItems: AppNavItem[];
-  unreadCount: number;
-  onCreateSpace: () => void;
-  onToggleNotifications: () => void;
-  onToggleSearch: () => void;
   onOpenProfile: (profileId: string) => void;
   onNavigate: (route: AppRoute) => void;
 }) {
@@ -1653,26 +2088,6 @@ function MobileBottomNav({
           <span>{item.label}</span>
         </button>
       ))}
-
-      {activeRoute.view === "feed" ? (
-        <button onClick={onToggleSearch}>
-          <Search size={20} />
-          <span>Поиск</span>
-        </button>
-      ) : null}
-
-      <button onClick={onCreateSpace}>
-        <CirclePlus size={20} />
-        <span>Доска</span>
-      </button>
-
-      {activeUser ? (
-        <button className="mobile-bell-button" onClick={onToggleNotifications}>
-          <Bell size={20} />
-          <span>События</span>
-          {unreadCount > 0 ? <b>{unreadCount}</b> : null}
-        </button>
-      ) : null}
 
       {activeUser ? (
         <button
@@ -1692,11 +2107,15 @@ function FeedPage({
   activeUserId,
   allPosts,
   commentsByPostId,
+  connectionSourcePostId,
+  followedWallIds,
   matchingSpaces,
   matchingUsers,
   hasSearch,
   pinnedPostIds,
+  postConnections,
   postById,
+  postPositions,
   posts,
   savedPostIds,
   spaces,
@@ -1704,7 +2123,9 @@ function FeedPage({
   wallById,
   onCreateSpace,
   onDeletePost,
+  onDeletePostConnection,
   onEditPost,
+  onFinishPostConnection,
   onFilterChange,
   onHidePost,
   onMovePost,
@@ -1717,17 +2138,24 @@ function FeedPage({
   onRecordView,
   onReportPost,
   onRepost,
+  onStartPostConnection,
+  onToggleChecklistItem,
   onToggleSave,
+  onVotePoll,
 }: {
   filter: FeedFilter;
   activeUserId: string | undefined;
   allPosts: Post[];
   commentsByPostId: Map<string, Comment[]>;
+  connectionSourcePostId: string | null;
+  followedWallIds: Set<string>;
   matchingSpaces: Wall[];
   matchingUsers: UserProfile[];
   hasSearch: boolean;
   pinnedPostIds: Set<string>;
+  postConnections: PostConnection[];
   postById: Map<string, Post>;
+  postPositions: Record<string, PostPosition>;
   posts: Post[];
   savedPostIds: Set<string>;
   spaces: Wall[];
@@ -1735,7 +2163,9 @@ function FeedPage({
   wallById: Map<string, Wall>;
   onCreateSpace: () => void;
   onDeletePost: (postId: string) => void;
-  onEditPost: (postId: string, text: string) => void;
+  onDeletePostConnection: (connectionId: string) => void;
+  onEditPost: (postId: string, text: string, options?: PostUpdatePayload) => void;
+  onFinishPostConnection: (postId: string) => void;
   onFilterChange: (filter: FeedFilter) => void;
   onHidePost: (postId: string) => void;
   onMovePost: (postId: string, x: number, y: number) => void;
@@ -1743,12 +2173,15 @@ function FeedPage({
   onOpenProfile: (profileId: string) => void;
   onOpenSpace: (spaceId: string) => void;
   onPinPost: (postId: string) => void;
-  onPublish: (text: string, attachments: MediaAttachment[]) => void;
+  onPublish: (text: string, attachments: MediaAttachment[], options?: Partial<PostDraftOptions>) => void;
   onReact: (postId: string, amount?: number) => void;
   onRecordView: (postId: string) => void;
   onReportPost: (postId: string) => void;
   onRepost: (postId: string) => void;
+  onStartPostConnection: (postId: string) => void;
+  onToggleChecklistItem: (postId: string, itemId: string) => void;
   onToggleSave: (postId: string) => void;
+  onVotePoll: (postId: string, optionId: string) => void;
 }) {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const filters: Array<{ id: FeedFilter; label: string }> = [
@@ -1763,7 +2196,20 @@ function FeedPage({
       : filter === "following"
         ? "Пока пусто"
         : "Пока пусто";
-  const fieldBoardHeight = getBoardCanvasHeight(posts);
+  const directorySpaces = filter === "following"
+    ? spaces.filter((space) => followedWallIds.has(space.id))
+    : filter === "all"
+      ? spaces
+      : [];
+  const shouldShowBoardDirectory = !hasSearch && directorySpaces.length > 0;
+  const feedPositionOverrides = shouldShowBoardDirectory ? postPositions : undefined;
+  const feedDefaultOffsetY = getInitialFieldBoardDefaultY(shouldShowBoardDirectory);
+  const fieldBoardHeight = getBoardCanvasHeight(posts, {
+    defaultOffsetX: getInitialFieldBoardDefaultX(),
+    defaultOffsetY: feedDefaultOffsetY,
+    positionOverrides: feedPositionOverrides,
+    usePostPositions: false,
+  });
 
   return (
     <section
@@ -1817,51 +2263,61 @@ function FeedPage({
             className="desktop-composer field-composer"
             placeholder="Новая заметка"
             targetLabel="Моя доска"
-            onPublish={(text, attachments) => {
-              onPublish(text, attachments);
+            onPublish={(text, attachments, options) => {
+              onPublish(text, attachments, options);
               setIsCreateOpen(false);
             }}
           />
         </div>
       ) : null}
 
-      <section className="board-directory" aria-label="Доски">
-        {spaces.slice(0, 5).map((space) => {
-          const spacePosts = allPosts.filter((post) => post.wallId === space.id);
-          const answerCount = spacePosts.reduce(
-            (sum, post) => sum + (commentsByPostId.get(post.id)?.length ?? 0),
-            0,
-          );
-          const viewCount = spacePosts.reduce((sum, post) => sum + getPostViewCount(post), 0);
+      {shouldShowBoardDirectory ? (
+        <section className="board-directory" aria-label="Доски">
+          {directorySpaces.slice(0, 5).map((space) => {
+            const spacePosts = allPosts.filter((post) => post.wallId === space.id);
+            const answerCount = spacePosts.reduce(
+              (sum, post) => sum + (commentsByPostId.get(post.id)?.length ?? 0),
+              0,
+            );
+            const viewCount = spacePosts.reduce((sum, post) => sum + getPostViewCount(post), 0);
 
-          return (
-            <FieldSpaceObject
-              key={space.id}
-              answerCount={answerCount}
-              postCount={spacePosts.length}
-              space={space}
-              viewCount={viewCount}
-              onOpenSpace={onOpenSpace}
-            />
-          );
-        })}
-      </section>
+            return (
+              <FieldSpaceObject
+                key={space.id}
+                answerCount={answerCount}
+                postCount={spacePosts.length}
+                space={space}
+                viewCount={viewCount}
+                onOpenSpace={onOpenSpace}
+              />
+            );
+          })}
+        </section>
+      ) : null}
 
       <WallBoard
         activeUserId={activeUserId}
+        avoidProtectedRects={shouldShowBoardDirectory}
+        canMovePost={() => true}
         className="field-board"
         commentsByPostId={commentsByPostId}
+        connectionSourcePostId={connectionSourcePostId}
         emptyText={emptyText}
         hint="перетащи карточки по странице"
         pinnedPostIds={pinnedPostIds}
+        postConnections={postConnections}
         postById={postById}
+        positionOverrides={feedPositionOverrides}
         posts={posts}
+        preferPostPositions={false}
         savedPostIds={savedPostIds}
         title="Доска"
         userById={userById}
         wallById={wallById}
         onDeletePost={onDeletePost}
+        onDeletePostConnection={onDeletePostConnection}
         onEditPost={onEditPost}
+        onFinishPostConnection={onFinishPostConnection}
         onHidePost={onHidePost}
         onMovePost={onMovePost}
         onOpenPost={onOpenPost}
@@ -1871,7 +2327,10 @@ function FeedPage({
         onRecordView={onRecordView}
         onReportPost={onReportPost}
         onRepost={onRepost}
+        onStartPostConnection={onStartPostConnection}
+        onToggleChecklistItem={onToggleChecklistItem}
         onToggleSave={onToggleSave}
+        onVotePoll={onVotePoll}
       />
 
     </section>
@@ -1962,19 +2421,29 @@ function FieldSpaceObject({
 
 function WallBoard({
   activeUserId,
+  avoidProtectedRects = true,
+  canMovePost = () => true,
   className,
   commentsByPostId,
+  connectionSourcePostId,
+  dynamicFieldOffsets = true,
   emptyText,
   hint = "перетащи заметку",
   pinnedPostIds,
+  postConnections,
   postById,
+  positionOverrides,
+  preferPostPositions = true,
   posts,
+  resolveProtectedLayout = true,
   savedPostIds,
   title = "Доска",
   userById,
   wallById,
   onDeletePost,
+  onDeletePostConnection,
   onEditPost,
+  onFinishPostConnection,
   onHidePost,
   onMovePost,
   onOpenPost,
@@ -1984,22 +2453,35 @@ function WallBoard({
   onRecordView,
   onReportPost,
   onRepost,
+  onStartPostConnection,
+  onToggleChecklistItem,
   onToggleSave,
+  onVotePoll,
 }: {
   activeUserId: string | undefined;
+  avoidProtectedRects?: boolean;
+  canMovePost?: (post: Post) => boolean;
   className?: string;
   commentsByPostId: Map<string, Comment[]>;
+  connectionSourcePostId: string | null;
+  dynamicFieldOffsets?: boolean;
   emptyText: string;
   hint?: string;
   pinnedPostIds: Set<string>;
+  postConnections: PostConnection[];
   postById: Map<string, Post>;
+  positionOverrides?: Record<string, PostPosition>;
+  preferPostPositions?: boolean;
   posts: Post[];
+  resolveProtectedLayout?: boolean;
   savedPostIds: Set<string>;
   title?: string;
   userById: Map<string, UserProfile>;
   wallById: Map<string, Wall>;
   onDeletePost: (postId: string) => void;
-  onEditPost: (postId: string, text: string) => void;
+  onDeletePostConnection: (connectionId: string) => void;
+  onEditPost: (postId: string, text: string, options?: PostUpdatePayload) => void;
+  onFinishPostConnection: (postId: string) => void;
   onHidePost: (postId: string) => void;
   onMovePost: (postId: string, x: number, y: number) => void;
   onOpenPost: (postId: string) => void;
@@ -2009,38 +2491,52 @@ function WallBoard({
   onRecordView: (postId: string) => void;
   onReportPost: (postId: string) => void;
   onRepost: (postId: string) => void;
+  onStartPostConnection: (postId: string) => void;
+  onToggleChecklistItem: (postId: string, itemId: string) => void;
   onToggleSave: (postId: string) => void;
+  onVotePoll: (postId: string, optionId: string) => void;
 }) {
+  const boardClassNames = className?.split(" ") ?? [];
+  const isFieldBoard = boardClassNames.includes("field-board");
   const [drag, setDrag] = useState<{
+    height: number;
     origin: PostPosition;
     pointerX: number;
     pointerY: number;
     postId: string;
+    width: number;
   } | null>(null);
   const boardRef = useRef<HTMLElement | null>(null);
   const [boardWidth, setBoardWidth] = useState(0);
-  const [boardDefaultX, setBoardDefaultX] = useState(0);
+  const [boardDefaultX, setBoardDefaultX] = useState(() => isFieldBoard ? getInitialFieldBoardDefaultX() : 0);
+  const [boardDefaultY, setBoardDefaultY] = useState(() => isFieldBoard ? getInitialFieldBoardDefaultY() : 0);
   const [protectedRects, setProtectedRects] = useState<BoardRect[]>([]);
   const protectedRectsRef = useRef<BoardRect[]>([]);
   const [previewPosition, setPreviewPosition] = useState<PostPosition | null>(null);
   const previewPositionRef = useRef<PostPosition | null>(null);
-  const boardClassNames = className?.split(" ") ?? [];
-  const isFieldBoard = boardClassNames.includes("field-board");
   const boardRightReserve = 0;
   const boardMaxX = isFieldBoard && boardWidth > 0
     ? Math.max(0, boardWidth - boardCardWidth - boardGap - boardRightReserve)
     : 1800;
   const basePostLayout = useMemo(
-    () => resolveBoardPostLayout(posts, boardMaxX, boardDefaultX),
-    [boardDefaultX, boardMaxX, posts],
+    () => resolveBoardPostLayout(posts, {
+      defaultOffsetY: boardDefaultY,
+      defaultOffsetX: boardDefaultX,
+      maxX: boardMaxX,
+      positionOverrides,
+      usePostPositions: preferPostPositions,
+    }),
+    [boardDefaultX, boardDefaultY, boardMaxX, positionOverrides, posts, preferPostPositions],
   );
   const postLayout = useMemo(
-    () => isFieldBoard ? resolveSafeBoardLayout(basePostLayout, protectedRects, boardMaxX) : basePostLayout,
-    [basePostLayout, boardMaxX, isFieldBoard, protectedRects],
+    () => isFieldBoard && avoidProtectedRects && resolveProtectedLayout
+      ? resolveSafeBoardLayout(basePostLayout, protectedRects, boardMaxX)
+      : basePostLayout,
+    [avoidProtectedRects, basePostLayout, boardMaxX, isFieldBoard, protectedRects, resolveProtectedLayout],
   );
   const boardHeight = Math.max(
     720,
-    ...postLayout.map(({ position }) => position.y + boardCardHeight + boardGap),
+    ...postLayout.map(({ height, position }) => position.y + height + boardGap),
   );
 
   useEffect(() => {
@@ -2050,18 +2546,15 @@ function WallBoard({
     const updateWidth = () => {
       const boardRect = node.getBoundingClientRect();
       const mainRect = node.closest(".main")?.getBoundingClientRect();
-      const searchRect = document.querySelector(".topbar.desktop-search .search")?.getBoundingClientRect();
       const nextBoardWidth = Math.round(boardRect.width);
       const defaultStartX = Math.max(0, Math.round((mainRect?.left ?? boardRect.left) - boardRect.left));
-      const searchReserve = searchRect
-        ? Math.max(0, Math.round(searchRect.right - (mainRect?.left ?? boardRect.left) + boardGap))
-        : 0;
-      const topChromeReserve = isFieldBoard ? Math.max(420, searchReserve) : 0;
+      const defaultStartY = dynamicFieldOffsets ? getFieldBoardContentStartY(node) : getInitialFieldBoardDefaultY(false);
       const maxDefaultX = Math.max(0, nextBoardWidth - boardCardWidth - boardGap - boardRightReserve);
       const nextProtectedRects = getFieldProtectedRects(node);
       protectedRectsRef.current = nextProtectedRects;
       setBoardWidth(Math.round(boardRect.width));
-      setBoardDefaultX(Math.min(maxDefaultX, defaultStartX + topChromeReserve));
+      setBoardDefaultX(Math.min(maxDefaultX, dynamicFieldOffsets ? defaultStartX : getInitialFieldBoardDefaultX()));
+      setBoardDefaultY(defaultStartY);
       setProtectedRects(nextProtectedRects);
     };
     updateWidth();
@@ -2074,7 +2567,7 @@ function WallBoard({
     const observer = new ResizeObserver(updateWidth);
     observer.observe(node);
     return () => observer.disconnect();
-  }, [isFieldBoard, posts.length]);
+  }, [dynamicFieldOffsets, isFieldBoard, posts.length]);
 
   useEffect(() => {
     if (!drag) return;
@@ -2084,9 +2577,9 @@ function WallBoard({
       const rawPosition = clampPostPosition({
         x: activeDrag.origin.x + event.clientX - activeDrag.pointerX,
         y: activeDrag.origin.y + event.clientY - activeDrag.pointerY,
-      }, boardMaxX);
-      const nextPosition = isFieldBoard
-        ? resolveSafeBoardPosition(rawPosition, protectedRectsRef.current, [], boardMaxX)
+      }, getBoardMaxXForWidth(boardMaxX, activeDrag.width));
+      const nextPosition = isFieldBoard && avoidProtectedRects
+        ? resolveSafeBoardPosition(rawPosition, protectedRectsRef.current, [], boardMaxX, activeDrag.height, activeDrag.width)
         : rawPosition;
       previewPositionRef.current = nextPosition;
       setPreviewPosition(nextPosition);
@@ -2111,19 +2604,23 @@ function WallBoard({
       window.removeEventListener("pointerup", handlePointerUp);
       window.removeEventListener("pointercancel", handlePointerUp);
     };
-  }, [boardMaxX, drag, isFieldBoard, onMovePost]);
+  }, [avoidProtectedRects, boardMaxX, drag, isFieldBoard, onMovePost]);
 
-  function startDrag(event: React.PointerEvent<HTMLDivElement>, postId: string, position: PostPosition) {
-    if (event.button !== 0 || isDragIgnored(event.target)) return;
+  function startDrag(event: React.PointerEvent<HTMLButtonElement>, post: Post, position: PostPosition) {
+    if (event.button !== 0) return;
     if (window.innerWidth < 760) return;
+    if (!canMovePost(post)) return;
 
     event.preventDefault();
+    event.stopPropagation();
     event.currentTarget.setPointerCapture?.(event.pointerId);
     setDrag({
+      height: getEstimatedBoardCardHeight(post),
       origin: position,
       pointerX: event.clientX,
       pointerY: event.clientY,
-      postId,
+      postId: post.id,
+      width: getEstimatedBoardCardWidth(post),
     });
     previewPositionRef.current = position;
     setPreviewPosition(position);
@@ -2140,26 +2637,46 @@ function WallBoard({
         <small>{hint}</small>
       </div>
       <div className="wall-board-canvas" style={{ "--board-content-height": `${boardHeight}px` } as CSSProperties}>
-        {postLayout.map(({ post, position }) => {
+        <BoardConnectionLayer
+          connections={postConnections}
+          layout={postLayout}
+          onDeleteConnection={onDeletePostConnection}
+        />
+        {postLayout.map(({ post, position, width }) => {
           const commentCount = commentsByPostId.get(post.id)?.length ?? 0;
           const currentPosition = drag?.postId === post.id && previewPosition ? previewPosition : position;
+          const canDragPost = canMovePost(post);
 
           return (
             <div
               key={post.id}
-              className={drag?.postId === post.id ? "wall-board-item dragging" : "wall-board-item"}
-              onPointerDown={(event) => startDrag(event, post.id, currentPosition)}
+              className={[
+                "wall-board-item",
+                canDragPost ? "can-drag" : "",
+                drag?.postId === post.id ? "dragging" : "",
+              ].filter(Boolean).join(" ")}
               style={
                 {
                   "--board-x": `${currentPosition.x}px`,
                   "--board-y": `${currentPosition.y}px`,
+                  "--board-card-width": `${width}px`,
                 } as CSSProperties
               }
             >
-              <span className="board-drag-handle" data-drag-handle title="Перетащить карточку" aria-hidden="true" />
+              {canDragPost ? (
+                <button
+                  type="button"
+                  className="board-drag-handle"
+                  data-drag-handle
+                  title="Перетащить карточку"
+                  aria-label="Перетащить карточку"
+                  onPointerDown={(event) => startDrag(event, post, currentPosition)}
+                />
+              ) : null}
               <PostCard
                 activeUserId={activeUserId}
                 commentCount={commentCount}
+                connectionSourcePostId={connectionSourcePostId}
                 hasReposted={hasUserRepostedPost(post.id, activeUserId, postById)}
                 isPinned={pinnedPostIds.has(post.id)}
                 isSaved={savedPostIds.has(post.id)}
@@ -2171,6 +2688,7 @@ function WallBoard({
                 wall={wallById.get(post.wallId)}
                 onDelete={onDeletePost}
                 onEdit={onEditPost}
+                onFinishConnection={onFinishPostConnection}
                 onHide={onHidePost}
                 onOpenPost={onOpenPost}
                 onOpenProfile={onOpenProfile}
@@ -2179,7 +2697,10 @@ function WallBoard({
                 onRecordView={onRecordView}
                 onReport={onReportPost}
                 onRepost={onRepost}
+                onStartConnection={onStartPostConnection}
+                onToggleChecklistItem={onToggleChecklistItem}
                 onToggleSave={onToggleSave}
+                onVotePoll={onVotePoll}
               />
             </div>
           );
@@ -2206,6 +2727,27 @@ function WallAvatar({
         formatWallInitial(fallback)
       )}
     </span>
+  );
+}
+
+function UserStatusLabel({
+  className = "",
+  forceOnline = false,
+  user,
+}: {
+  className?: string;
+  forceOnline?: boolean;
+  user: UserProfile | undefined;
+}) {
+  const status = getUserStatus(user, forceOnline);
+  const isOnline = status === "Онлайн";
+  const statusClassName = ["user-status", className, isOnline ? "online" : ""].filter(Boolean).join(" ");
+
+  return (
+    <small className={statusClassName}>
+      {isOnline ? <span className="status-dot" aria-hidden="true" /> : null}
+      <span>{status}</span>
+    </small>
   );
 }
 
@@ -2241,8 +2783,11 @@ function WallActionLinks({ buttons }: { buttons: WallActionButton[] }) {
 function SpacePage({
   activeUser,
   commentsByPostId,
+  connectionSourcePostId,
   followedWallIds,
   pinnedPostIds,
+  pinnedWallIds,
+  postConnections,
   postById,
   posts,
   savedPostIds,
@@ -2251,25 +2796,34 @@ function SpacePage({
   wallById,
   onCreateSpace,
   onDeletePost,
+  onDeletePostConnection,
   onEditPost,
+  onFinishPostConnection,
   onFollow,
   onHidePost,
   onOpenPost,
   onOpenProfile,
   onOpenSettings,
   onPinPost,
+  onTogglePinnedWall,
   onPublish,
   onMovePost,
   onReact,
   onRecordView,
   onReportPost,
   onRepost,
+  onStartPostConnection,
+  onToggleChecklistItem,
   onToggleSave,
+  onVotePoll,
 }: {
   activeUser: UserProfile | undefined;
   commentsByPostId: Map<string, Comment[]>;
+  connectionSourcePostId: string | null;
   followedWallIds: Set<string>;
   pinnedPostIds: Set<string>;
+  pinnedWallIds: Set<string>;
+  postConnections: PostConnection[];
   postById: Map<string, Post>;
   posts: Post[];
   savedPostIds: Set<string>;
@@ -2278,20 +2832,26 @@ function SpacePage({
   wallById: Map<string, Wall>;
   onCreateSpace: () => void;
   onDeletePost: (postId: string) => void;
-  onEditPost: (postId: string, text: string) => void;
+  onDeletePostConnection: (connectionId: string) => void;
+  onEditPost: (postId: string, text: string, options?: PostUpdatePayload) => void;
+  onFinishPostConnection: (postId: string) => void;
   onFollow: (wallId: string) => void;
   onHidePost: (postId: string) => void;
   onOpenPost: (postId: string) => void;
   onOpenProfile: (profileId: string) => void;
   onOpenSettings: (wallId: string) => void;
   onPinPost: (postId: string) => void;
-  onPublish: (text: string, attachments: MediaAttachment[]) => void;
+  onTogglePinnedWall: (wallId: string) => void;
+  onPublish: (text: string, attachments: MediaAttachment[], options?: Partial<PostDraftOptions>) => void;
   onMovePost: (postId: string, x: number, y: number) => void;
   onReact: (postId: string, amount?: number) => void;
   onRecordView: (postId: string) => void;
   onReportPost: (postId: string) => void;
   onRepost: (postId: string) => void;
+  onStartPostConnection: (postId: string) => void;
+  onToggleChecklistItem: (postId: string, itemId: string) => void;
   onToggleSave: (postId: string) => void;
+  onVotePoll: (postId: string, optionId: string) => void;
 }) {
   if (!space) {
     return (
@@ -2308,6 +2868,7 @@ function SpacePage({
   const discussionCount = posts.reduce((sum, post) => sum + (commentsByPostId.get(post.id)?.length ?? 0), 0);
   const viewCount = posts.reduce((sum, post) => sum + getPostViewCount(post), 0);
   const isFollowing = followedWallIds.has(space.id);
+  const isPinnedInMenu = pinnedWallIds.has(space.id);
   const canPublish = activeUser ? canPublishToWall(space, activeUser.id) : false;
   const canManage = activeUser ? canManageWall(space, activeUser.id) : false;
   const fieldBoardHeight = getBoardCanvasHeight(posts);
@@ -2340,10 +2901,19 @@ function SpacePage({
             <MiniMetric label="Ответы" value={`${discussionCount}`} />
             <MiniMetric label="Прочитали" value={formatCompactNumber(viewCount)} />
           </div>
-          <div className={canManage ? "space-action-row" : "space-action-row single"}>
+          <div className={canManage ? "space-action-row has-settings" : "space-action-row"}>
             <button className={isFollowing ? "follow-button active" : "follow-button"} onClick={() => onFollow(space.id)}>
               {isFollowing ? <Check size={15} /> : <CirclePlus size={15} />}
               {isFollowing ? "Подписка" : "Подписаться"}
+            </button>
+            <button
+              className={isPinnedInMenu ? "wall-settings-button text menu-pin-button active" : "wall-settings-button text menu-pin-button"}
+              onClick={() => onTogglePinnedWall(space.id)}
+              aria-label={isPinnedInMenu ? "Убрать доску из левого меню" : "Добавить доску в левое меню"}
+              title={isPinnedInMenu ? "Убрать из меню" : "Добавить в меню"}
+            >
+              <Pin size={15} />
+              {isPinnedInMenu ? "Из меню" : "В меню"}
             </button>
             {canManage ? (
               <button className="wall-settings-button" onClick={() => onOpenSettings(space.id)} aria-label="Настройки доски">
@@ -2357,23 +2927,35 @@ function SpacePage({
       {space.rules ? <p className="profile-bio">{space.rules}</p> : null}
 
       {canPublish ? (
-        <Composer className="desktop-composer field-composer board-composer" targetLabel={`Доска ${formatWallTextName(space)}`} onPublish={onPublish} />
+        <Composer
+          className="desktop-composer field-composer board-composer"
+          targetLabel={`Доска ${formatWallTextName(space)}`}
+          wall={space}
+          onPublish={onPublish}
+        />
       ) : null}
 
       <WallBoard
         activeUserId={activeUser?.id}
+        canMovePost={(post) => canMoveSharedPost(post, [...wallById.values()], activeUser?.id)}
         className="field-board space-field-board"
         commentsByPostId={commentsByPostId}
+        connectionSourcePostId={connectionSourcePostId}
+        dynamicFieldOffsets={false}
         emptyText="На этой доске пока нет заметок"
         hint="перетащи карточки по доске"
         pinnedPostIds={pinnedPostIds}
+        postConnections={postConnections}
         postById={postById}
         posts={posts}
+        resolveProtectedLayout={false}
         savedPostIds={savedPostIds}
         userById={userById}
         wallById={wallById}
         onDeletePost={onDeletePost}
+        onDeletePostConnection={onDeletePostConnection}
         onEditPost={onEditPost}
+        onFinishPostConnection={onFinishPostConnection}
         onHidePost={onHidePost}
         onMovePost={onMovePost}
         onOpenPost={onOpenPost}
@@ -2383,27 +2965,227 @@ function SpacePage({
         onRecordView={onRecordView}
         onReportPost={onReportPost}
         onRepost={onRepost}
+        onStartPostConnection={onStartPostConnection}
+        onToggleChecklistItem={onToggleChecklistItem}
         onToggleSave={onToggleSave}
+        onVotePoll={onVotePoll}
       />
     </section>
   );
 }
 
+type TextFormatAction = "bold" | "italic" | "code" | "quote" | "list" | "link";
+
+const textFormatActions: Array<{
+  action: TextFormatAction;
+  icon: React.ReactNode;
+  label: string;
+}> = [
+  { action: "bold", icon: <Bold size={15} />, label: "Жирный" },
+  { action: "italic", icon: <Italic size={15} />, label: "Курсив" },
+  { action: "code", icon: <Code2 size={15} />, label: "Код" },
+  { action: "quote", icon: <Quote size={15} />, label: "Цитата" },
+  { action: "list", icon: <List size={15} />, label: "Список" },
+  { action: "link", icon: <Link2 size={15} />, label: "Ссылка" },
+];
+
+function FormattingTextarea({
+  autoFocus = false,
+  onChange,
+  onPaste,
+  placeholder,
+  value,
+}: {
+  autoFocus?: boolean;
+  onChange: (value: string) => void;
+  onPaste?: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
+  placeholder?: string;
+  value: string;
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
+  const [isInlineMenuOpen, setIsInlineMenuOpen] = useState(false);
+
+  useEffect(() => {
+    if (!menuPosition && !isInlineMenuOpen) return;
+
+    function close() {
+      setMenuPosition(null);
+      setIsInlineMenuOpen(false);
+    }
+
+    window.addEventListener("click", close);
+    window.addEventListener("keydown", close);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("keydown", close);
+    };
+  }, [isInlineMenuOpen, menuPosition]);
+
+  function openMenuAt(x: number, y: number) {
+    setMenuPosition({
+      x: Math.max(8, Math.min(x, window.innerWidth - 220)),
+      y: Math.max(8, Math.min(y, window.innerHeight - 260)),
+    });
+  }
+
+  function applyFormat(action: TextFormatAction) {
+    const textarea = textareaRef.current;
+    const selectionStart = textarea?.selectionStart ?? value.length;
+    const selectionEnd = textarea?.selectionEnd ?? value.length;
+    const result = formatTextSelection(value, selectionStart, selectionEnd, action);
+
+    onChange(result.value);
+    setMenuPosition(null);
+    setIsInlineMenuOpen(false);
+    window.requestAnimationFrame(() => {
+      textarea?.focus();
+      textarea?.setSelectionRange(result.selectionStart, result.selectionEnd);
+    });
+  }
+
+  function handleContextMenu(event: React.MouseEvent<HTMLTextAreaElement>) {
+    event.preventDefault();
+    openMenuAt(event.clientX, event.clientY);
+  }
+
+  function handleKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (!event.metaKey && !event.ctrlKey) return;
+
+    const key = event.key.toLowerCase();
+    if (key === "b") {
+      event.preventDefault();
+      applyFormat("bold");
+      return;
+    }
+    if (key === "i") {
+      event.preventDefault();
+      applyFormat("italic");
+      return;
+    }
+    if (key === "k") {
+      event.preventDefault();
+      applyFormat("link");
+    }
+  }
+
+  return (
+    <div className="format-textarea" data-no-open>
+      <textarea
+        ref={textareaRef}
+        autoFocus={autoFocus}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        onContextMenu={handleContextMenu}
+        onKeyDown={handleKeyDown}
+        onPaste={onPaste}
+        placeholder={placeholder}
+      />
+      <button
+        type="button"
+        className="format-trigger"
+        onClick={(event) => {
+          event.stopPropagation();
+          setMenuPosition(null);
+          setIsInlineMenuOpen((value) => !value);
+        }}
+        aria-label="Форматирование текста"
+        title="Форматирование текста"
+      >
+        <Type size={15} />
+        Aa
+      </button>
+      {isInlineMenuOpen ? (
+        <TextFormatMenu
+          anchored
+          onApply={applyFormat}
+        />
+      ) : null}
+      {menuPosition ? (
+        <TextFormatMenu
+          x={menuPosition.x}
+          y={menuPosition.y}
+          onApply={applyFormat}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function TextFormatMenu({
+  anchored = false,
+  x,
+  y,
+  onApply,
+}: {
+  anchored?: boolean;
+  x?: number;
+  y?: number;
+  onApply: (action: TextFormatAction) => void;
+}) {
+  return (
+    <div
+      className={anchored ? "text-format-menu inline-format-menu" : "text-format-menu"}
+      style={anchored ? undefined : { left: x, top: y } as CSSProperties}
+      onClick={(event) => event.stopPropagation()}
+      data-no-open
+    >
+      {textFormatActions.map((item) => (
+        <button key={item.action} type="button" onClick={() => onApply(item.action)}>
+          {item.icon}
+          {item.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function Composer({
   className = "",
+  objectTools = true,
   placeholder = "Новая заметка",
   targetLabel,
+  wall,
   onPublish,
 }: {
   className?: string;
+  objectTools?: boolean;
   placeholder?: string;
   targetLabel?: string;
-  onPublish: (text: string, attachments: MediaAttachment[]) => void;
+  wall?: Wall;
+  onPublish: (text: string, attachments: MediaAttachment[], options?: Partial<PostDraftOptions>) => void;
 }) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<MediaAttachment[]>([]);
+  const [options, setOptions] = useState<PostDraftOptions>(() => createDefaultPostDraftOptions());
+  const [isAttachMenuOpen, setIsAttachMenuOpen] = useState(false);
+  const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
   const [isReading, setIsReading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const composerClassName = [
+    "composer-card",
+    objectTools ? "composer-note-builder" : "",
+    objectTools ? `post-bg-${options.appearance.background}` : "",
+    objectTools ? `post-shape-${options.appearance.shape}` : "",
+    objectTools ? `post-size-${options.appearance.size}` : "",
+    className,
+  ].filter(Boolean).join(" ");
+  const composerStyle = objectTools ? getPostAccentStyle(options.appearance, wall) : undefined;
+
+  useEffect(() => {
+    if (!isAttachMenuOpen) return;
+
+    function closeMenu() {
+      setIsAttachMenuOpen(false);
+    }
+
+    window.addEventListener("click", closeMenu);
+    window.addEventListener("keydown", closeMenu);
+    return () => {
+      window.removeEventListener("click", closeMenu);
+      window.removeEventListener("keydown", closeMenu);
+    };
+  }, [isAttachMenuOpen]);
 
   async function attachFiles(files: FileList | File[] | null) {
     const mediaFiles = Array.from(files ?? []).filter((file) => getMediaKind(file));
@@ -2442,15 +3224,89 @@ function Composer({
     void attachFiles(pastedFiles);
   }
 
+  function openFilePicker() {
+    setIsAttachMenuOpen(false);
+    fileInputRef.current?.click();
+  }
+
+  function enableObject(kind: Extract<PostKind, "sketch" | "poll" | "list">) {
+    setOptions((current) => {
+      const patch: Partial<PostDraftOptions> = { kind };
+
+      if (kind === "poll" && !current.poll) {
+        patch.poll = createDefaultPoll(text);
+      }
+
+      if (kind === "list" && current.checklist.length === 0) {
+        patch.checklist = [{ id: crypto.randomUUID(), text: "", checkedBy: [] }];
+      }
+
+      if (kind === "sketch" && current.appearance.size === "compact") {
+        patch.appearance = { ...current.appearance, size: "normal" };
+      }
+
+      return { ...current, ...patch };
+    });
+    setIsAttachMenuOpen(false);
+  }
+
+  function updateAppearance(patch: Partial<PostAppearance>) {
+    setOptions((current) => ({
+      ...current,
+      appearance: {
+        ...current.appearance,
+        ...patch,
+      },
+    }));
+  }
+
+  function handleResizePointerDown(event: React.PointerEvent<HTMLButtonElement>) {
+    if (!objectTools) return;
+
+    event.preventDefault();
+    const startX = event.clientX;
+    const startY = event.clientY;
+
+    function handlePointerMove(moveEvent: PointerEvent) {
+      const dx = moveEvent.clientX - startX;
+      const dy = moveEvent.clientY - startY;
+      const size: PostAppearance["size"] = dy > 84
+        ? "tall"
+        : dx > 96
+          ? "wide"
+          : dx < -54 || dy < -54
+            ? "compact"
+            : "normal";
+
+      updateAppearance({ size });
+    }
+
+    function handlePointerUp() {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    }
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp, { once: true });
+  }
+
   function submit() {
-    if (!text.trim() && attachments.length === 0) return;
-    onPublish(text, attachments);
+    if (objectTools) {
+      if (!hasPublishablePostDraft(text, attachments, options)) return;
+      onPublish(text, attachments, options);
+    } else {
+      if (!text.trim() && attachments.length === 0) return;
+      onPublish(text, attachments);
+    }
     setText("");
     setAttachments([]);
+    setOptions(createDefaultPostDraftOptions());
+    setIsAttachMenuOpen(false);
+    setIsAdvancedOpen(false);
   }
 
   return (
-    <section className={`composer-card ${className}`.trim()}>
+    <section className={composerClassName} style={composerStyle}>
       {targetLabel ? (
         <div className="composer-target">
           <span>Публикация</span>
@@ -2458,9 +3314,9 @@ function Composer({
         </div>
       ) : null}
 
-      <textarea
+      <FormattingTextarea
         value={text}
-        onChange={(event) => setText(event.target.value)}
+        onChange={setText}
         onPaste={handlePaste}
         placeholder={placeholder}
       />
@@ -2478,6 +3334,16 @@ function Composer({
         </div>
       ) : null}
 
+      {objectTools ? (
+        <PostObjectEditor
+          options={options}
+          showControls={isAdvancedOpen}
+          text={text}
+          wall={wall}
+          onChange={setOptions}
+        />
+      ) : null}
+
       <div className="composer-actions">
         <input
           ref={fileInputRef}
@@ -2486,18 +3352,53 @@ function Composer({
           multiple
           onChange={(event) => attachFiles(event.target.files)}
         />
-        <IconButton label="Добавить изображение" onClick={() => fileInputRef.current?.click()}>
-          <ImageIcon size={16} />
-        </IconButton>
-        <IconButton label="Добавить видео" onClick={() => fileInputRef.current?.click()}>
-          <Video size={16} />
-        </IconButton>
-        <IconButton label="Добавить аудио" onClick={() => fileInputRef.current?.click()}>
-          <AudioLines size={16} />
-        </IconButton>
+        <div className="composer-attach" onClick={(event) => event.stopPropagation()}>
+          <IconButton
+            label="Вложения"
+            onClick={() => setIsAttachMenuOpen((value) => !value)}
+          >
+            <Paperclip size={17} />
+          </IconButton>
+          {isAttachMenuOpen ? (
+            <div className="composer-attach-menu" data-no-open>
+              <button type="button" onClick={openFilePicker}>
+                <ImageIcon size={17} />
+                Фото или видео
+              </button>
+              <button type="button" onClick={openFilePicker}>
+                <AudioLines size={17} />
+                Звук
+              </button>
+              {objectTools ? (
+                <>
+                  <button type="button" onClick={() => enableObject("sketch")}>
+                    <Brush size={17} />
+                    Рисунок
+                  </button>
+                  <button type="button" onClick={() => enableObject("poll")}>
+                    <Vote size={17} />
+                    Голосование
+                  </button>
+                  <button type="button" onClick={() => enableObject("list")}>
+                    <List size={17} />
+                    Список
+                  </button>
+                </>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+        {objectTools ? (
+          <IconButton
+            label="Настройки заметки"
+            onClick={() => setIsAdvancedOpen((value) => !value)}
+          >
+            <SlidersHorizontal size={17} />
+          </IconButton>
+        ) : null}
         <button
           className="publish"
-          disabled={isReading || (!text.trim() && attachments.length === 0)}
+          disabled={isReading || (objectTools ? !hasPublishablePostDraft(text, attachments, options) : (!text.trim() && attachments.length === 0))}
           onClick={submit}
           aria-label="Опубликовать"
           title="Опубликовать"
@@ -2505,7 +3406,628 @@ function Composer({
           <Send size={16} />
         </button>
       </div>
+      {objectTools ? (
+        <button
+          type="button"
+          className="composer-resize-handle"
+          onPointerDown={handleResizePointerDown}
+          aria-label="Изменить размер заметки"
+          title="Тяни, чтобы изменить размер заметки"
+        />
+      ) : null}
     </section>
+  );
+}
+
+function PostObjectEditor({
+  compact = false,
+  options,
+  showControls = false,
+  text,
+  wall,
+  onChange,
+}: {
+  compact?: boolean;
+  options: PostDraftOptions;
+  showControls?: boolean;
+  text: string;
+  wall?: Wall;
+  onChange: (options: PostDraftOptions) => void;
+}) {
+  const editorClassName = compact ? "post-object-editor compact" : "post-object-editor";
+  const hasSpecialEditor = options.kind === "sketch" ||
+    options.kind === "poll" ||
+    options.kind === "list" ||
+    options.kind === "checklist" ||
+    options.sketch.length > 0 ||
+    options.checklist.length > 0 ||
+    Boolean(options.poll);
+
+  function update(patch: Partial<PostDraftOptions>) {
+    onChange({ ...options, ...patch });
+  }
+
+  function updateSettings(key: keyof PostInteractionSettings) {
+    update({
+      settings: {
+        ...options.settings,
+        [key]: !options.settings[key],
+      },
+    });
+  }
+
+  function updateAppearance(patch: Partial<PostAppearance>) {
+    update({
+      appearance: {
+        ...options.appearance,
+        ...patch,
+      },
+    });
+  }
+
+  if (!showControls && !hasSpecialEditor) return null;
+
+  return (
+    <div className={editorClassName} data-no-open>
+      {showControls ? (
+        <div className="post-object-toolbar">
+        <details className="post-object-section post-object-small-section">
+          <summary>
+            <Palette size={15} />
+            Вид
+          </summary>
+          <div className="post-object-controls">
+            <DraftAppearancePreview
+              appearance={options.appearance}
+              text={text}
+              wall={wall}
+            />
+            <ControlGroup label="Размер">
+              {[
+                ["compact", "Маленькая"],
+                ["normal", "Обычная"],
+                ["wide", "Широкая"],
+                ["tall", "Высокая"],
+              ].map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  className={options.appearance.size === id ? "active" : ""}
+                  onClick={() => updateAppearance({ size: id as PostAppearance["size"] })}
+                >
+                  {label}
+                </button>
+              ))}
+            </ControlGroup>
+            <ControlGroup label="Фон">
+              {[
+                ["plain", "Чисто"],
+                ["soft", "Мягко"],
+                ["glass", "Стекло"],
+                ["gradient", "Градиент"],
+                ["paper", "Бумага"],
+              ].map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  className={options.appearance.background === id ? "active" : ""}
+                  onClick={() => updateAppearance({ background: id as PostAppearance["background"] })}
+                >
+                  {label}
+                </button>
+              ))}
+            </ControlGroup>
+            <ControlGroup label="Форма">
+              {[
+                ["soft", "Мягкая"],
+                ["round", "Круглая"],
+                ["sharp", "Острая"],
+                ["ticket", "Билет"],
+              ].map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  className={options.appearance.shape === id ? "active" : ""}
+                  onClick={() => updateAppearance({ shape: id as PostAppearance["shape"] })}
+                >
+                  {label}
+                </button>
+              ))}
+            </ControlGroup>
+            <div className="post-accent-row" aria-label="Цвет заметки">
+              {wallAccentOptions.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  className={options.appearance.accentColor === option.id ? "active" : ""}
+                  onClick={() => updateAppearance({ accentColor: options.appearance.accentColor === option.id ? undefined : option.id })}
+                  style={{ "--wall-swatch": option.accent } as CSSProperties}
+                  aria-label={option.label}
+                />
+              ))}
+            </div>
+          </div>
+        </details>
+
+        <details className="post-object-section post-object-small-section">
+          <summary>
+            <Settings size={15} />
+            Действия
+          </summary>
+          <div className="post-toggle-grid">
+            {[
+              ["reactions", "Огоньки"],
+              ["comments", "Ответы"],
+              ["views", "Просмотры"],
+              ["saves", "Сохранение"],
+              ["reposts", "Репост"],
+            ].map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                className={options.settings[key as keyof PostInteractionSettings] ? "active" : ""}
+                onClick={() => updateSettings(key as keyof PostInteractionSettings)}
+              >
+                {options.settings[key as keyof PostInteractionSettings] ? <Check size={14} /> : <X size={14} />}
+                {label}
+              </button>
+            ))}
+          </div>
+        </details>
+        </div>
+      ) : null}
+
+      {(options.kind === "sketch" || options.sketch.length > 0) ? (
+        <SketchEditor
+          strokes={options.sketch}
+          onChange={(sketch) => update({ sketch })}
+        />
+      ) : null}
+
+      {(options.kind === "checklist" || options.kind === "list" || options.checklist.length > 0) ? (
+        <ChecklistEditor
+          items={options.checklist}
+          onChange={(checklist) => update({ checklist })}
+        />
+      ) : null}
+
+      {(options.kind === "poll") ? (
+        <PollEditor
+          poll={options.poll}
+          text={text}
+          onChange={(poll) => update({ poll })}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function DraftAppearancePreview({
+  appearance,
+  text,
+  wall,
+}: {
+  appearance: PostAppearance;
+  text: string;
+  wall?: Wall;
+}) {
+  const previewText = text.trim() || "Новая заметка";
+
+  return (
+    <div
+      className={[
+        "draft-appearance-preview",
+        `post-bg-${appearance.background}`,
+        `post-shape-${appearance.shape}`,
+        `post-size-${appearance.size}`,
+      ].join(" ")}
+      style={getPostAccentStyle(appearance, wall)}
+    >
+      <span>Предпросмотр</span>
+      <strong>{previewText.slice(0, 120)}</strong>
+      <footer>
+        <i><Flame size={13} /> 0</i>
+        <i><MessageCircle size={13} /> 0</i>
+        <i><Eye size={13} /> 0</i>
+      </footer>
+    </div>
+  );
+}
+
+function ControlGroup({ children, label }: { children: React.ReactNode; label: string }) {
+  return (
+    <div className="control-group">
+      <span>{label}</span>
+      <div>{children}</div>
+    </div>
+  );
+}
+
+function ChecklistEditor({
+  items,
+  onChange,
+}: {
+  items: ChecklistItem[];
+  onChange: (items: ChecklistItem[]) => void;
+}) {
+  function updateItem(id: string, text: string) {
+    onChange(items.map((item) => (item.id === id ? { ...item, text } : item)));
+  }
+
+  return (
+    <details className="post-object-section" open>
+      <summary>
+        <CheckSquare size={15} />
+        Список
+      </summary>
+      <div className="checklist-editor">
+        {(items.length > 0 ? items : [{ id: crypto.randomUUID(), text: "", checkedBy: [] }]).map((item) => (
+          <label key={item.id}>
+            <CheckSquare size={14} />
+            <input
+              value={item.text}
+              onChange={(event) => {
+                updateItem(item.id, event.target.value);
+                if (items.length === 0) onChange([{ ...item, text: event.target.value }]);
+              }}
+              placeholder="Пункт"
+            />
+            <button type="button" onClick={() => onChange(items.filter((current) => current.id !== item.id))} aria-label="Удалить пункт">
+              <X size={13} />
+            </button>
+          </label>
+        ))}
+        <button
+          type="button"
+          className="tiny-add-button"
+          onClick={() => onChange([...items, { id: crypto.randomUUID(), text: "", checkedBy: [] }].slice(0, 24))}
+        >
+          <Plus size={14} />
+          Пункт
+        </button>
+      </div>
+    </details>
+  );
+}
+
+function PollEditor({
+  poll,
+  text,
+  onChange,
+}: {
+  poll: PostPoll | undefined;
+  text: string;
+  onChange: (poll: PostPoll | undefined) => void;
+}) {
+  const currentPoll = poll ?? createDefaultPoll(text);
+
+  function updateOption(id: string, optionText: string) {
+    onChange({
+      ...currentPoll,
+      options: currentPoll.options.map((option) => (option.id === id ? { ...option, text: optionText } : option)),
+    });
+  }
+
+  return (
+    <details className="post-object-section" open>
+      <summary>
+        <Vote size={15} />
+        Голосование
+      </summary>
+      <div className="poll-editor">
+        <label>
+          <span>Вопрос</span>
+          <input
+            value={currentPoll.question}
+            onChange={(event) => onChange({ ...currentPoll, question: event.target.value })}
+            placeholder="Вопрос"
+          />
+        </label>
+        <button
+          type="button"
+          className={currentPoll.multi ? "toggle-line active" : "toggle-line"}
+          onClick={() => onChange({ ...currentPoll, multi: !currentPoll.multi })}
+        >
+          <Check size={14} />
+          Несколько вариантов
+        </button>
+        <div className="poll-option-editor">
+          {currentPoll.options.map((option, index) => (
+            <label key={option.id}>
+              <span>{index + 1}</span>
+              <input value={option.text} onChange={(event) => updateOption(option.id, event.target.value)} />
+              <button
+                type="button"
+                onClick={() => onChange({ ...currentPoll, options: currentPoll.options.filter((item) => item.id !== option.id) })}
+                aria-label="Удалить вариант"
+              >
+                <X size={13} />
+              </button>
+            </label>
+          ))}
+        </div>
+        <button
+          type="button"
+          className="tiny-add-button"
+          disabled={currentPoll.options.length >= 8}
+          onClick={() =>
+            onChange({
+              ...currentPoll,
+              options: [...currentPoll.options, { id: crypto.randomUUID(), text: `Вариант ${currentPoll.options.length + 1}`, voterIds: [] }],
+            })
+          }
+        >
+          <Plus size={14} />
+          Вариант
+        </button>
+      </div>
+    </details>
+  );
+}
+
+function SketchEditor({
+  strokes,
+  onChange,
+}: {
+  strokes: SketchStroke[];
+  onChange: (strokes: SketchStroke[]) => void;
+}) {
+  const [color, setColor] = useState(sketchPalette[2]);
+  const [width, setWidth] = useState(4);
+  const [draftStroke, setDraftStroke] = useState<SketchStroke | null>(null);
+  const canvasRef = useRef<SVGSVGElement | null>(null);
+
+  function getPoint(event: React.PointerEvent<SVGSVGElement>): SketchPoint | null {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    return {
+      x: Math.max(0, Math.min(100, Math.round(((event.clientX - rect.left) / rect.width) * 1000) / 10)),
+      y: Math.max(0, Math.min(100, Math.round(((event.clientY - rect.top) / rect.height) * 1000) / 10)),
+    };
+  }
+
+  function startDraw(event: React.PointerEvent<SVGSVGElement>) {
+    const point = getPoint(event);
+    if (!point) return;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    setDraftStroke({
+      id: crypto.randomUUID(),
+      color,
+      width,
+      points: [point],
+    });
+  }
+
+  function draw(event: React.PointerEvent<SVGSVGElement>) {
+    if (!draftStroke || event.buttons !== 1) return;
+    const point = getPoint(event);
+    if (!point) return;
+    setDraftStroke((current) => current ? { ...current, points: [...current.points, point].slice(-300) } : current);
+  }
+
+  function endDraw() {
+    if (!draftStroke) return;
+    if (draftStroke.points.length > 1) {
+      onChange([...strokes, draftStroke].slice(-80));
+    }
+    setDraftStroke(null);
+  }
+
+  return (
+    <details className="post-object-section" open>
+      <summary>
+        <Brush size={15} />
+        Рисунок
+      </summary>
+      <div className="sketch-editor">
+        <svg
+          ref={canvasRef}
+          viewBox="0 0 100 100"
+          preserveAspectRatio="none"
+          onPointerDown={startDraw}
+          onPointerMove={draw}
+          onPointerUp={endDraw}
+          onPointerCancel={endDraw}
+          role="img"
+          aria-label="Рисунок заметки"
+        >
+          {[...strokes, ...(draftStroke ? [draftStroke] : [])].map((stroke) => (
+            <path
+              key={stroke.id}
+              d={strokeToPath(stroke.points)}
+              fill="none"
+              stroke={stroke.color}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={stroke.width}
+              vectorEffect="non-scaling-stroke"
+            />
+          ))}
+        </svg>
+        <div className="sketch-tools">
+          <div className="sketch-palette">
+            {sketchPalette.map((item) => (
+              <button
+                key={item}
+                type="button"
+                className={color === item ? "active" : ""}
+                onClick={() => setColor(item)}
+                style={{ "--swatch": item } as CSSProperties}
+                aria-label={`Цвет ${item}`}
+              />
+            ))}
+          </div>
+          <label>
+            <span>Толщина</span>
+            <input type="range" min={1} max={12} value={width} onChange={(event) => setWidth(Number(event.target.value))} />
+          </label>
+          <button type="button" className="sketch-clear-button" onClick={() => onChange([])}>
+            <Eraser size={14} />
+            Очистить
+          </button>
+        </div>
+      </div>
+    </details>
+  );
+}
+
+function SketchPreview({ strokes }: { strokes: SketchStroke[] }) {
+  return (
+    <svg className="sketch-preview" viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Рисунок">
+      {strokes.map((stroke) => (
+        <path
+          key={stroke.id}
+          d={strokeToPath(stroke.points)}
+          fill="none"
+          stroke={stroke.color}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={stroke.width}
+          vectorEffect="non-scaling-stroke"
+        />
+      ))}
+    </svg>
+  );
+}
+
+function PostChecklist({
+  activeUserId,
+  items,
+  postId,
+  onToggle,
+}: {
+  activeUserId: string | undefined;
+  items: ChecklistItem[];
+  postId: string;
+  onToggle: (postId: string, itemId: string) => void;
+}) {
+  const checkedCount = items.filter((item) => activeUserId && item.checkedBy.includes(activeUserId)).length;
+
+  return (
+    <div className="post-checklist" data-no-open>
+      <div>
+        <CheckSquare size={15} />
+        <span>{checkedCount}/{items.length}</span>
+      </div>
+      {items.map((item) => {
+        const checked = Boolean(activeUserId && item.checkedBy.includes(activeUserId));
+        return (
+          <button
+            key={item.id}
+            type="button"
+            className={checked ? "checked" : ""}
+            onClick={() => onToggle(postId, item.id)}
+          >
+            <span>{checked ? <Check size={13} /> : null}</span>
+            {item.text}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function PostPollBlock({
+  activeUserId,
+  poll,
+  postId,
+  onVote,
+}: {
+  activeUserId: string | undefined;
+  poll: PostPoll;
+  postId: string;
+  onVote: (postId: string, optionId: string) => void;
+}) {
+  const totalVotes = poll.options.reduce((sum, option) => sum + option.voterIds.length, 0);
+
+  return (
+    <div className="post-poll" data-no-open>
+      <div className="post-poll-head">
+        <Vote size={15} />
+        <strong>{poll.question}</strong>
+      </div>
+      {poll.options.map((option) => {
+        const voted = Boolean(activeUserId && option.voterIds.includes(activeUserId));
+        const percent = totalVotes > 0 ? Math.round((option.voterIds.length / totalVotes) * 100) : 0;
+
+        return (
+          <button
+            key={option.id}
+            type="button"
+            className={voted ? "voted" : ""}
+            onClick={() => onVote(postId, option.id)}
+          >
+            <span style={{ "--poll-value": `${percent}%` } as CSSProperties} />
+            <strong>{option.text}</strong>
+            <em>{percent}%</em>
+          </button>
+        );
+      })}
+      <small>{totalVotes} голосов{poll.multi ? " · несколько вариантов" : ""}</small>
+    </div>
+  );
+}
+
+function BoardConnectionLayer({
+  connections,
+  layout,
+  onDeleteConnection,
+}: {
+  connections: PostConnection[];
+  layout: BoardLayoutItem[];
+  onDeleteConnection: (connectionId: string) => void;
+}) {
+  const layoutByPostId = new Map(layout.map((item) => [item.post.id, item]));
+  const visibleConnections = connections.flatMap((connection) => {
+    const from = layoutByPostId.get(connection.fromPostId);
+    const to = layoutByPostId.get(connection.toPostId);
+    if (!from || !to || from.post.wallId !== to.post.wallId) return [];
+    return [{ connection, from, to }];
+  });
+
+  if (visibleConnections.length === 0) return null;
+
+  return (
+    <svg className="board-connections" aria-label="Связи заметок">
+      <defs>
+        <marker id="board-arrow-head" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+          <path d="M0,0 L8,4 L0,8 Z" />
+        </marker>
+      </defs>
+      {visibleConnections.map(({ connection, from, to }) => {
+        const start = {
+          x: from.position.x + from.width,
+          y: from.position.y + Math.min(from.height, boardCardHeight) / 2,
+        };
+        const end = {
+          x: to.position.x,
+          y: to.position.y + Math.min(to.height, boardCardHeight) / 2,
+        };
+        const midX = (start.x + end.x) / 2;
+
+        return (
+          <g key={connection.id}>
+            <path
+              d={`M ${start.x} ${start.y} C ${midX} ${start.y}, ${midX} ${end.y}, ${end.x} ${end.y}`}
+              markerEnd="url(#board-arrow-head)"
+            />
+            <g
+              className="board-connection-remove"
+              role="button"
+              tabIndex={0}
+              onClick={() => onDeleteConnection(connection.id)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") onDeleteConnection(connection.id);
+              }}
+              aria-label="Удалить стрелку"
+            >
+              <circle cx={midX} cy={(start.y + end.y) / 2} r="9" />
+              <text x={midX} y={(start.y + end.y) / 2 + 4}>×</text>
+            </g>
+          </g>
+        );
+      })}
+    </svg>
   );
 }
 
@@ -2518,10 +4040,19 @@ function CreateSpaceDialog({
 }) {
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
+  const [avatarUrl, setAvatarUrl] = useState("");
+  const [bannerUrl, setBannerUrl] = useState("");
+  const [accentColor, setAccentColor] = useState<string>(wallAccentOptions[0].id);
   const [description, setDescription] = useState("");
   const [rules, setRules] = useState("");
+  const [privacyMode, setPrivacyMode] = useState<WallPrivacyMode>("public");
+  const [inviteCode, setInviteCode] = useState(() => createWallInviteCode());
+  const [inviteTtlDays, setInviteTtlDays] = useState("30");
+  const [inviteMaxUses, setInviteMaxUses] = useState("");
   const [publishMode, setPublishMode] = useState<Wall["publishMode"]>("open");
   const [error, setError] = useState("");
+  const [mediaError, setMediaError] = useState("");
+  const [uploadingTarget, setUploadingTarget] = useState<"avatar" | "banner" | null>(null);
   const closeTimerRef = useRef<number | null>(null);
   const [isClosing, setIsClosing] = useState(false);
 
@@ -2537,6 +4068,33 @@ function CreateSpaceDialog({
     closeTimerRef.current = window.setTimeout(onClose, 180);
   }
 
+  async function uploadCreateSpaceImage(event: ChangeEvent<HTMLInputElement>, target: "avatar" | "banner") {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      setMediaError("Нужна картинка.");
+      return;
+    }
+
+    setMediaError("");
+    setUploadingTarget(target);
+
+    try {
+      const attachment = await createMediaAttachment(file, "image");
+      if (target === "avatar") {
+        setAvatarUrl(attachment.url);
+      } else {
+        setBannerUrl(attachment.url);
+      }
+    } catch {
+      setMediaError("Не удалось загрузить изображение.");
+    } finally {
+      setUploadingTarget(null);
+    }
+  }
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const nextName = name.trim();
@@ -2550,13 +4108,23 @@ function CreateSpaceDialog({
       return;
     }
     onCreate({
+      accentColor: normalizeWallAccentValue(accentColor),
+      avatarFocus: defaultMediaFocus,
+      avatarUrl,
+      bannerFocus: defaultMediaFocus,
+      bannerUrl,
       name: nextName,
       slug: nextSlug,
       description: description.trim(),
       rules: rules.trim(),
+      privacyMode,
+      invite: buildWallInviteSettings(inviteCode, inviteTtlDays, inviteMaxUses),
       publishMode,
     });
   }
+
+  const accentOption = getWallAccentOption(accentColor);
+  const customAccentValue = normalizeHexColor(accentColor) ?? accentOption.accent;
 
   return (
     <div
@@ -2579,6 +4147,62 @@ function CreateSpaceDialog({
           <span>Адрес</span>
           <input value={slug} onChange={(event) => setSlug(event.target.value)} placeholder={slugify(name) || "доска"} />
         </label>
+        <div className="create-space-media">
+          <section>
+            <span>Аватар</span>
+            <div className="create-space-avatar-preview">
+              {avatarUrl ? <img src={avatarUrl} alt="" draggable={false} /> : formatWallInitial(name || "Д")}
+            </div>
+            <label className="wall-media-upload">
+              {uploadingTarget === "avatar" ? <Loader2 size={15} className="spin" /> : <ImageIcon size={15} />}
+              <span>Загрузить</span>
+              <input type="file" accept="image/*" onChange={(event) => uploadCreateSpaceImage(event, "avatar")} />
+            </label>
+          </section>
+          <section>
+            <span>Баннер</span>
+            <div
+              className="create-space-banner-preview"
+              style={bannerUrl ? { backgroundImage: `url(${bannerUrl})` } : undefined}
+            >
+              {bannerUrl ? null : "Без баннера"}
+            </div>
+            <label className="wall-media-upload">
+              {uploadingTarget === "banner" ? <Loader2 size={15} className="spin" /> : <ImageIcon size={15} />}
+              <span>Загрузить</span>
+              <input type="file" accept="image/*" onChange={(event) => uploadCreateSpaceImage(event, "banner")} />
+            </label>
+          </section>
+        </div>
+        {mediaError ? <div className="inline-error compact">{mediaError}</div> : null}
+        <div className="wall-color-editor compact">
+          <span>Цвет доски</span>
+          <div className="wall-color-options" role="radiogroup" aria-label="Цвет доски">
+            {wallAccentOptions.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                className={accentColor === option.id ? "active" : ""}
+                onClick={() => setAccentColor(option.id)}
+                role="radio"
+                aria-checked={accentColor === option.id}
+                style={{ "--wall-swatch": option.accent } as CSSProperties}
+              >
+                <i />
+                <span>{option.label}</span>
+              </button>
+            ))}
+          </div>
+          <label className="wall-custom-color">
+            <span>Свой</span>
+            <input
+              type="color"
+              value={customAccentValue}
+              onChange={(event) => setAccentColor(event.target.value)}
+            />
+            <small>{accentOption.label === "Свой" ? accentOption.accent : "любой цвет"}</small>
+          </label>
+        </div>
         <label>
           <span>Описание</span>
           <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} />
@@ -2594,6 +4218,35 @@ function CreateSpaceDialog({
             <option value="owner">Только владелец</option>
           </select>
         </label>
+        <label>
+          <span>Доступ</span>
+          <select value={privacyMode} onChange={(event) => setPrivacyMode(event.target.value as WallPrivacyMode)}>
+            <option value="public">Открытая</option>
+            <option value="link">Только по ссылке</option>
+            <option value="invite">По приглашению</option>
+          </select>
+        </label>
+        {privacyMode !== "public" ? (
+          <div className="invite-settings">
+            <div>
+              <span>Код ссылки</span>
+              <button type="button" onClick={() => setInviteCode(createWallInviteCode())}>
+                Обновить
+              </button>
+            </div>
+            <input value={inviteCode} onChange={(event) => setInviteCode(event.target.value)} />
+            <div className="invite-grid">
+              <label>
+                <span>Дней</span>
+                <input value={inviteTtlDays} onChange={(event) => setInviteTtlDays(event.target.value)} inputMode="numeric" />
+              </label>
+              <label>
+                <span>Лимит</span>
+                <input value={inviteMaxUses} onChange={(event) => setInviteMaxUses(event.target.value)} inputMode="numeric" placeholder="без лимита" />
+              </label>
+            </div>
+          </div>
+        ) : null}
         {error ? <div className="inline-error compact">{error}</div> : null}
         <button className="solid-button" disabled={name.trim().length < 2}>
           <CirclePlus size={16} />
@@ -2623,14 +4276,19 @@ function WallSettingsDialog({
   const [name, setName] = useState(wall.name);
   const [avatarFocus, setAvatarFocus] = useState<MediaFocus>(() => getMediaFocus(wall.avatarFocus));
   const [bannerFocus, setBannerFocus] = useState<MediaFocus>(() => getMediaFocus(wall.bannerFocus));
-  const [accentColor, setAccentColor] = useState(wall.accentColor ?? wallAccentOptions[0].id);
+  const [accentColor, setAccentColor] = useState<string>(wall.accentColor ?? wallAccentOptions[0].id);
   const [description, setDescription] = useState(wall.description ?? "");
   const [rules, setRules] = useState(wall.rules ?? "");
+  const [privacyMode, setPrivacyMode] = useState<WallPrivacyMode>(wall.privacyMode ?? "public");
+  const [inviteCode, setInviteCode] = useState(wall.invite?.code ?? createWallInviteCode());
+  const [inviteTtlDays, setInviteTtlDays] = useState(() => formatInviteTtlDays(wall.invite?.expiresAt));
+  const [inviteMaxUses, setInviteMaxUses] = useState(() => wall.invite?.maxUses ? String(wall.invite.maxUses) : "");
   const [publishMode, setPublishMode] = useState<Wall["publishMode"]>(wall.publishMode ?? "open");
   const [mediaError, setMediaError] = useState("");
   const [uploadingTarget, setUploadingTarget] = useState<"avatar" | "banner" | null>(null);
   const [isDeleteArmed, setIsDeleteArmed] = useState(false);
   const accentOption = getWallAccentOption(accentColor);
+  const customAccentValue = normalizeHexColor(accentColor) ?? accentOption.accent;
   const previewStyle = {
     ...getWallAccentCssVars(accentOption),
     ...(bannerUrl ? { "--banner-image": `url(${bannerUrl})` } : {}),
@@ -2660,7 +4318,7 @@ function WallSettingsDialog({
         }))
         .filter((button) => button.label && /^https?:\/\//i.test(button.url))
         .slice(0, 4),
-      accentColor,
+      accentColor: normalizeWallAccentValue(accentColor),
       avatarFocus,
       avatarUrl,
       bannerFocus,
@@ -2668,6 +4326,8 @@ function WallSettingsDialog({
       description,
       name,
       rules,
+      privacyMode,
+      invite: buildWallInviteSettings(inviteCode, inviteTtlDays, inviteMaxUses, wall.invite?.usedBy),
       publishMode,
     });
   }
@@ -2850,6 +4510,15 @@ function WallSettingsDialog({
               </button>
             ))}
           </div>
+          <label className="wall-custom-color">
+            <span>Свой</span>
+            <input
+              type="color"
+              value={customAccentValue}
+              onChange={(event) => setAccentColor(event.target.value)}
+            />
+            <small>{accentOption.label === "Свой" ? accentOption.accent : "любой цвет"}</small>
+          </label>
         </div>
         <label>
           <span>Описание</span>
@@ -2866,6 +4535,36 @@ function WallSettingsDialog({
             <option value="owner">Только владелец</option>
           </select>
         </label>
+        <label>
+          <span>Доступ</span>
+          <select value={privacyMode} onChange={(event) => setPrivacyMode(event.target.value as WallPrivacyMode)}>
+            <option value="public">Открытая</option>
+            <option value="link">Только по ссылке</option>
+            <option value="invite">По приглашению</option>
+          </select>
+        </label>
+        {privacyMode !== "public" ? (
+          <div className="invite-settings">
+            <div>
+              <span>Ссылка доступа</span>
+              <button type="button" onClick={() => setInviteCode(createWallInviteCode())}>
+                Обновить
+              </button>
+            </div>
+            <input value={inviteCode} onChange={(event) => setInviteCode(event.target.value)} />
+            <div className="invite-grid">
+              <label>
+                <span>Дней</span>
+                <input value={inviteTtlDays} onChange={(event) => setInviteTtlDays(event.target.value)} inputMode="numeric" />
+              </label>
+              <label>
+                <span>Лимит</span>
+                <input value={inviteMaxUses} onChange={(event) => setInviteMaxUses(event.target.value)} inputMode="numeric" placeholder="без лимита" />
+              </label>
+            </div>
+            <small>{getWallInvitePreview(wall.id, inviteCode)}</small>
+          </div>
+        ) : null}
         <div className="wall-button-editor">
           <div className="wall-button-editor-head">
             <span>Кнопки</span>
@@ -2980,7 +4679,7 @@ function MobileComposerSheet({
 }: {
   targetLabel?: string;
   onClose: () => void;
-  onPublish: (text: string, attachments: MediaAttachment[]) => void;
+  onPublish: (text: string, attachments: MediaAttachment[], options?: Partial<PostDraftOptions>) => void;
 }) {
   const closeTimerRef = useRef<number | null>(null);
   const [isClosing, setIsClosing] = useState(false);
@@ -3020,6 +4719,7 @@ function MobileComposerSheet({
 function PostCard({
   activeUserId,
   commentCount,
+  connectionSourcePostId,
   hasReposted,
   isPinned,
   isSaved,
@@ -3032,6 +4732,7 @@ function PostCard({
   wall,
   onDelete,
   onEdit,
+  onFinishConnection,
   onHide,
   onOpenPost,
   onOpenProfile,
@@ -3040,10 +4741,14 @@ function PostCard({
   onRecordView,
   onReport,
   onRepost,
+  onStartConnection,
+  onToggleChecklistItem,
   onToggleSave,
+  onVotePoll,
 }: {
   activeUserId: string | undefined;
   commentCount: number;
+  connectionSourcePostId: string | null;
   hasReposted: boolean;
   isPinned: boolean;
   isSaved: boolean;
@@ -3055,7 +4760,8 @@ function PostCard({
   userById: Map<string, UserProfile>;
   wall: Wall | undefined;
   onDelete: (postId: string) => void;
-  onEdit: (postId: string, text: string) => void;
+  onEdit: (postId: string, text: string, options?: PostUpdatePayload) => void;
+  onFinishConnection: (postId: string) => void;
   onHide: (postId: string) => void;
   onOpenPost: (postId: string) => void;
   onOpenProfile: (profileId: string) => void;
@@ -3064,7 +4770,10 @@ function PostCard({
   onRecordView: (postId: string) => void;
   onReport: (postId: string) => void;
   onRepost: (postId: string) => void;
+  onStartConnection: (postId: string) => void;
+  onToggleChecklistItem: (postId: string, itemId: string) => void;
   onToggleSave: (postId: string) => void;
+  onVotePoll: (postId: string, optionId: string) => void;
 }) {
   const [reacting, setReacting] = useState(false);
   const [reactionBursts, setReactionBursts] = useState<ReactionBurst[]>([]);
@@ -3072,7 +4781,9 @@ function PostCard({
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [draftText, setDraftText] = useState(post.text);
+  const [draftOptions, setDraftOptions] = useState<PostDraftOptions>(() => buildPostDraftOptionsFromPost(post));
   const articleRef = useRef<HTMLElement | null>(null);
+  const reactButtonRef = useRef<HTMLButtonElement | null>(null);
   const reactionTimerRef = useRef<number | null>(null);
   const reactionBurstTimersRef = useRef<number[]>([]);
   const displayReactionsRef = useRef(post.reactions);
@@ -3094,6 +4805,9 @@ function PostCard({
   const placeLabel = getWallDisplayName(wall, userById);
   const fieldObjectKind = objectKind ?? getPostObjectKind(post, commentCount);
   const isMinecraftDownload = post.id === minecraftDownloadPostId && post.wallId === minecraftWallId;
+  const postSettings = getPostSettings(post);
+  const postAppearance = getPostAppearance(post);
+  const canFinishConnection = Boolean(connectionSourcePostId && connectionSourcePostId !== post.id);
 
   useEffect(() => {
     return () => {
@@ -3109,11 +4823,13 @@ function PostCard({
   }, []);
 
   useEffect(() => {
+    if (isEditing) return;
     setDraftText(post.text);
-  }, [post.text]);
+    setDraftOptions(buildPostDraftOptionsFromPost(post));
+  }, [isEditing, post]);
 
   useEffect(() => {
-    const nextReactions = post.reactions + pendingReactionsRef.current;
+    const nextReactions = Math.max(post.reactions + pendingReactionsRef.current, displayReactionsRef.current);
     displayReactionsRef.current = nextReactions;
     setDisplayReactions(nextReactions);
   }, [post.reactions]);
@@ -3223,19 +4939,51 @@ function PostCard({
     }, reactionIdleMs);
   }
 
+  function playReactionPulse() {
+    const button = reactButtonRef.current;
+    if (!button || typeof button.animate !== "function") return;
+
+    button.animate(
+      [
+        { transform: "translateY(0) scale(1)" },
+        { transform: "translateY(-1px) scale(1.05)" },
+        { transform: "translateY(0) scale(1)" },
+      ],
+      { duration: 260, easing: "cubic-bezier(0.16, 1, 0.3, 1)" },
+    );
+    button.querySelector(".react-icon")?.animate(
+      [
+        { transform: "scale(1) rotate(0deg)" },
+        { transform: "scale(1.2) rotate(-8deg)" },
+        { transform: "scale(1) rotate(0deg)" },
+      ],
+      { duration: 420, easing: "cubic-bezier(0.16, 1, 0.3, 1)" },
+    );
+    button.querySelector(".react-count")?.animate(
+      [
+        { transform: "translateY(0)", opacity: 1 },
+        { transform: "translateY(-4px)", opacity: 1 },
+        { transform: "translateY(0)", opacity: 1 },
+      ],
+      { duration: 320, easing: "cubic-bezier(0.16, 1, 0.3, 1)" },
+    );
+  }
+
   function handleReact() {
+    if (!postSettings.reactions) return;
     const nextReactions = displayReactionsRef.current + 1;
 
     displayReactionsRef.current = nextReactions;
     pendingReactionsRef.current += 1;
     queueReactionFrame();
     queueReactionBurst(nextReactions);
+    playReactionPulse();
     keepReactionShellAlive();
   }
 
   function saveEdit() {
-    if (!draftText.trim()) return;
-    onEdit(post.id, draftText);
+    if (!hasPublishablePostDraft(draftText, post.attachments, draftOptions)) return;
+    onEdit(post.id, draftText, draftOptions);
     setIsEditing(false);
     setIsMenuOpen(false);
   }
@@ -3246,6 +4994,24 @@ function PostCard({
     setIsMenuOpen(false);
   }
 
+  function handleCardClickCapture(event: React.MouseEvent<HTMLElement>) {
+    if (isEditing || isMenuOpen || !connectionSourcePostId) return;
+    if (isPostConnectionClickIgnored(event.target)) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    if (connectionSourcePostId !== post.id) {
+      onFinishConnection(post.id);
+    }
+  }
+
+  function handleCardClick(event: React.MouseEvent<HTMLElement>) {
+    if (isEditing || isMenuOpen) return;
+    if (connectionSourcePostId) return;
+    if (isPostOpenIgnored(event.target)) return;
+    onOpenPost(post.id);
+  }
+
   const cardClassName = [
     "post-card",
     surface === "field" ? "field-object" : "",
@@ -3254,19 +5020,32 @@ function PostCard({
     post.attachments.length > 0 ? "has-media" : "",
     post.repostOfId ? "is-repost" : "",
     isPinned ? "is-pinned" : "",
+    `kind-${getPostKind(post)}`,
+    `post-bg-${postAppearance.background}`,
+    `post-shape-${postAppearance.shape}`,
+    `post-size-${postAppearance.size}`,
     reacting ? "reaction-wake" : "",
+    connectionSourcePostId === post.id ? "connection-source" : "",
+    canFinishConnection ? "connection-target" : "",
     isMenuOpen ? "menu-open" : "",
   ].filter(Boolean).join(" ");
+  const postAccentStyle = getPostAccentStyle(postAppearance, wall);
 
   if (isMinecraftDownload) {
     return (
-      <article ref={articleRef} className={`${cardClassName} minecraft-download-post`}>
+      <article
+        ref={articleRef}
+        className={`${cardClassName} minecraft-download-post`}
+        style={postAccentStyle}
+        onClickCapture={handleCardClickCapture}
+        onClick={handleCardClick}
+      >
         <header className="minecraft-post-head">
           <span className="minecraft-post-mark">
             <PackagePlus size={22} />
           </span>
           <div>
-            <span>Minecraft 1.21.1 · Fabric</span>
+            <span>Версия 26.1.2 · Fabric</span>
           </div>
         </header>
 
@@ -3302,14 +5081,19 @@ function PostCard({
   }
 
   return (
-    <article ref={articleRef} className={cardClassName}>
+    <article
+      ref={articleRef}
+      className={cardClassName}
+      style={postAccentStyle}
+      onClickCapture={handleCardClickCapture}
+      onClick={handleCardClick}
+    >
       {surface === "field" ? (
         <div className="object-topline">
           <span>{getObjectKindLabel(fieldObjectKind)}</span>
           <i>{getObjectSignal(post, commentCount)}</i>
         </div>
       ) : null}
-
       <header className="post-header">
         <button className="avatar-button" onClick={() => onOpenProfile(author.id)}>
           <Avatar user={author} />
@@ -3332,22 +5116,46 @@ function PostCard({
         </button>
         {isMenuOpen ? (
           <div className="post-menu">
-            <button onClick={() => onOpenPost(post.id)}>
-              <MessageCircle size={15} />
-              Открыть ответы
+            {postSettings.comments ? (
+              <button onClick={() => onOpenPost(post.id)}>
+                <MessageCircle size={15} />
+                Открыть ответы
+              </button>
+            ) : null}
+            {postSettings.saves ? (
+              <button onClick={() => onToggleSave(post.id)}>
+                <Bookmark size={15} />
+                {isSaved ? "Из сохранённого" : "В сохранённое"}
+              </button>
+            ) : null}
+            {postSettings.reposts ? (
+              <button onClick={() => onRepost(post.id)} disabled={hasReposted}>
+                <Repeat2 size={15} />
+                {hasReposted ? "Уже на доске" : "Поделиться на доске"}
+              </button>
+            ) : null}
+            {canFinishConnection ? (
+              <button onClick={() => {
+                onFinishConnection(post.id);
+                setIsMenuOpen(false);
+              }}>
+                <ArrowRight size={15} />
+                Стрелка сюда
+              </button>
+            ) : null}
+            <button onClick={() => {
+              onStartConnection(post.id);
+              setIsMenuOpen(false);
+            }}>
+              <ArrowRight size={15} />
+              Стрелка отсюда
             </button>
-            <button onClick={() => onToggleSave(post.id)}>
-              <Bookmark size={15} />
-              {isSaved ? "Из сохранённого" : "В сохранённое"}
-            </button>
-            <button onClick={() => onRepost(post.id)} disabled={hasReposted}>
-              <Repeat2 size={15} />
-              {hasReposted ? "Уже на доске" : "Поделиться на доске"}
-            </button>
-            <button onClick={() => onPin(post.id)}>
-              <Pin size={15} />
-              {isPinned ? "Открепить" : "Закрепить"}
-            </button>
+            {isOwnPost ? (
+              <button onClick={() => onPin(post.id)}>
+                <Pin size={15} />
+                {isPinned ? "Открепить" : "Закрепить"}
+              </button>
+            ) : null}
             <button onClick={copyPostLink}>
               <ShareLinkIcon />
               Скопировать ссылку
@@ -3381,8 +5189,15 @@ function PostCard({
 
       {isEditing ? (
         <div className="post-edit">
-          <textarea value={draftText} onChange={(event) => setDraftText(event.target.value)} autoFocus />
-          <div>
+          <FormattingTextarea value={draftText} onChange={setDraftText} autoFocus />
+          <PostObjectEditor
+            compact
+            options={draftOptions}
+            showControls
+            text={draftText}
+            onChange={setDraftOptions}
+          />
+          <div className="post-edit-actions">
             <button className="solid-button" onClick={saveEdit}>
               <Check size={16} />
               Сохранить
@@ -3393,7 +5208,11 @@ function PostCard({
           </div>
         </div>
       ) : post.text ? (
-        <p className="post-text">{post.text}</p>
+        <FormattedText className="post-text" text={post.text} />
+      ) : null}
+
+      {post.sketch && post.sketch.length > 0 ? (
+        <SketchPreview strokes={post.sketch} />
       ) : null}
 
       {post.attachments.length > 0 ? (
@@ -3402,6 +5221,24 @@ function PostCard({
             <MediaPreview key={attachment.id} attachment={attachment} />
           ))}
         </div>
+      ) : null}
+
+      {post.checklist && post.checklist.length > 0 ? (
+        <PostChecklist
+          activeUserId={activeUserId}
+          items={post.checklist}
+          postId={post.id}
+          onToggle={onToggleChecklistItem}
+        />
+      ) : null}
+
+      {post.poll ? (
+        <PostPollBlock
+          activeUserId={activeUserId}
+          poll={post.poll}
+          postId={post.id}
+          onVote={onVotePoll}
+        />
       ) : null}
 
       {repostedPost ? (
@@ -3431,51 +5268,212 @@ function PostCard({
       ) : null}
 
       <footer className="post-footer">
-        <button
-          className={reacting ? "react-button reacting" : "react-button"}
-          onClick={handleReact}
-          aria-label={`Добавить огонёк. Сейчас ${displayReactions}`}
-        >
-          <span className="react-icon">
-            <Flame size={16} />
-          </span>
-          <span className="react-count">{displayReactions}</span>
-          <ReactionParticles bursts={reactionBursts} />
-        </button>
-        <button className="post-stat comments-stat" onClick={() => onOpenPost(post.id)} aria-label={`Ответы ${commentCount}`}>
-          <MessageCircle size={16} />
-          <span className="stat-label">Ответы</span>
-          {commentCount > 0 ? <span className="stat-count">{commentCount}</span> : null}
-        </button>
-        <span
-          className="post-stat passive views-stat"
-          title="Прочитали"
-          aria-label={`Прочитали ${getPostViewCount(post)}`}
-        >
-          <Eye size={16} />
-          <span className="views-copy">
-            <strong>{formatCompactNumber(getPostViewCount(post))}</strong>
-          </span>
-        </span>
-        <button
-          className={isSaved ? "post-stat active" : "post-stat"}
-          onClick={() => onToggleSave(post.id)}
-          aria-label={isSaved ? "Убрать из сохранённого" : "В сохранённое"}
-        >
-          <Bookmark size={16} />
-        </button>
-        <button
-          className={hasReposted ? "post-stat reposted" : "post-stat"}
-          onClick={() => onRepost(post.id)}
-          disabled={hasReposted}
-          aria-label={hasReposted ? "Уже на вашей доске" : "Поделиться на доске"}
-          title={hasReposted ? "Уже на вашей доске" : "Поделиться на доске"}
-        >
-          <Repeat2 size={16} />
-        </button>
+        <div className="post-footer-metrics">
+          {postSettings.reactions ? (
+            <button
+              ref={reactButtonRef}
+              className={reacting ? "react-button reacting" : "react-button"}
+              onClick={handleReact}
+              aria-label={`Добавить огонёк. Сейчас ${displayReactions}`}
+            >
+              <span className="react-icon">
+                <Flame size={16} />
+              </span>
+              <span className="react-count">{displayReactions}</span>
+              <ReactionParticles bursts={reactionBursts} />
+            </button>
+          ) : null}
+          {postSettings.comments ? (
+            <button className="post-stat comments-stat" onClick={() => onOpenPost(post.id)} aria-label={`Ответы ${commentCount}`}>
+              <MessageCircle size={16} />
+              <span className="stat-label">Ответы</span>
+              <span className="stat-count">{commentCount}</span>
+            </button>
+          ) : null}
+          {postSettings.views ? (
+            <span
+              className="post-stat passive views-stat"
+              title="Прочитали"
+              aria-label={`Прочитали ${getPostViewCount(post)}`}
+            >
+              <Eye size={16} />
+              <span className="views-copy">
+                <strong>{formatCompactNumber(getPostViewCount(post))}</strong>
+              </span>
+            </span>
+          ) : null}
+        </div>
+        <div className="post-footer-tools">
+          {postSettings.saves ? (
+            <button
+              className={isSaved ? "post-stat active" : "post-stat"}
+              onClick={() => onToggleSave(post.id)}
+              aria-label={isSaved ? "Убрать из сохранённого" : "В сохранённое"}
+            >
+              <Bookmark size={16} />
+            </button>
+          ) : null}
+          {postSettings.reposts ? (
+            <button
+              className={hasReposted ? "post-stat reposted" : "post-stat"}
+              onClick={() => onRepost(post.id)}
+              disabled={hasReposted}
+              aria-label={hasReposted ? "Уже на вашей доске" : "Поделиться на доске"}
+              title={hasReposted ? "Уже на вашей доске" : "Поделиться на доске"}
+            >
+              <Repeat2 size={16} />
+            </button>
+          ) : null}
+        </div>
       </footer>
     </article>
   );
+}
+
+function FormattedText({ className, text }: { className: string; text: string }) {
+  const blocks: React.ReactNode[] = [];
+  let listItems: React.ReactNode[] = [];
+
+  function flushList() {
+    if (listItems.length === 0) return;
+    blocks.push(<ul key={`list-${blocks.length}`}>{listItems}</ul>);
+    listItems = [];
+  }
+
+  text.split(/\r?\n/).forEach((line, index) => {
+    const trimmedLine = line.trim();
+
+    if (!trimmedLine) {
+      flushList();
+      blocks.push(<br key={`br-${index}`} />);
+      return;
+    }
+
+    const listMatch = trimmedLine.match(/^[-*]\s+(.+)$/);
+    if (listMatch) {
+      listItems.push(<li key={`li-${index}`}>{formatInlineText(listMatch[1])}</li>);
+      return;
+    }
+
+    flushList();
+
+    if (trimmedLine.startsWith("> ")) {
+      blocks.push(<blockquote key={`quote-${index}`}>{formatInlineText(trimmedLine.slice(2))}</blockquote>);
+      return;
+    }
+
+    blocks.push(<p key={`p-${index}`}>{formatInlineText(line)}</p>);
+  });
+
+  flushList();
+
+  return <div className={className}>{blocks}</div>;
+}
+
+function formatInlineText(text: string): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+  const pattern = /(\*\*([^*]+)\*\*|`([^`]+)`|\*([^*]+)\*|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\))/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      nodes.push(text.slice(lastIndex, match.index));
+    }
+
+    const key = `${match.index}-${match[0]}`;
+    if (match[2]) {
+      nodes.push(<strong key={key}>{match[2]}</strong>);
+    } else if (match[3]) {
+      nodes.push(<code key={key}>{match[3]}</code>);
+    } else if (match[4]) {
+      nodes.push(<em key={key}>{match[4]}</em>);
+    } else if (match[5] && match[6]) {
+      nodes.push(
+        <a key={key} href={match[6]} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
+          {match[5]}
+        </a>,
+      );
+    }
+
+    lastIndex = pattern.lastIndex;
+  }
+
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex));
+  }
+
+  return nodes.length > 0 ? nodes : [text];
+}
+
+function formatTextSelection(
+  value: string,
+  selectionStart: number,
+  selectionEnd: number,
+  action: TextFormatAction,
+): { selectionEnd: number; selectionStart: number; value: string } {
+  const selected = value.slice(selectionStart, selectionEnd);
+  const fallback = getFormatFallback(action);
+  const source = selected || fallback;
+  const replacement = getFormattedText(source, action);
+  const nextValue = `${value.slice(0, selectionStart)}${replacement}${value.slice(selectionEnd)}`;
+  const innerOffset = getFormatInnerOffset(action);
+
+  return {
+    value: nextValue,
+    selectionStart: selectionStart + innerOffset.start,
+    selectionEnd: selectionStart + replacement.length - innerOffset.end,
+  };
+}
+
+function getFormatFallback(action: TextFormatAction): string {
+  const fallbacks: Record<TextFormatAction, string> = {
+    bold: "жирный текст",
+    italic: "курсив",
+    code: "код",
+    quote: "цитата",
+    list: "пункт",
+    link: "текст ссылки",
+  };
+
+  return fallbacks[action];
+}
+
+function getFormattedText(text: string, action: TextFormatAction): string {
+  switch (action) {
+    case "bold":
+      return `**${text}**`;
+    case "italic":
+      return `*${text}*`;
+    case "code":
+      return text.includes("\n") ? `\`\`\`\n${text}\n\`\`\`` : `\`${text}\``;
+    case "quote":
+      return text.split(/\r?\n/).map((line) => `> ${line || " "}`).join("\n");
+    case "list":
+      return text.split(/\r?\n/).map((line) => `- ${line || "пункт"}`).join("\n");
+    case "link":
+      return `[${text}](https://)`;
+    default:
+      return text;
+  }
+}
+
+function getFormatInnerOffset(action: TextFormatAction): { end: number; start: number } {
+  switch (action) {
+    case "bold":
+      return { start: 2, end: 2 };
+    case "italic":
+    case "code":
+      return { start: 1, end: 1 };
+    case "link":
+      return { start: 1, end: 11 };
+    case "quote":
+      return { start: 2, end: 0 };
+    case "list":
+      return { start: 2, end: 0 };
+    default:
+      return { start: 0, end: 0 };
+  }
 }
 
 function ShareLinkIcon() {
@@ -3507,7 +5505,9 @@ function PostThreadPage({
   onReportComment,
   onReportPost,
   onRepost,
+  onToggleChecklistItem,
   onToggleSave,
+  onVotePoll,
 }: {
   activeUser: UserProfile | undefined;
   comments: Comment[];
@@ -3522,7 +5522,7 @@ function PostThreadPage({
   onDeleteComment: (commentId: string) => void;
   onDeletePost: (postId: string) => void;
   onEditComment: (commentId: string, text: string) => void;
-  onEditPost: (postId: string, text: string) => void;
+  onEditPost: (postId: string, text: string, options?: PostUpdatePayload) => void;
   onHideComment: (commentId: string) => void;
   onHidePost: (postId: string) => void;
   onOpenProfile: (profileId: string) => void;
@@ -3533,10 +5533,13 @@ function PostThreadPage({
   onReportComment: (commentId: string) => void;
   onReportPost: (postId: string) => void;
   onRepost: (postId: string) => void;
+  onToggleChecklistItem: (postId: string, itemId: string) => void;
   onToggleSave: (postId: string) => void;
+  onVotePoll: (postId: string, optionId: string) => void;
 }) {
   if (!post) return <div className="empty">Заметка не найдена</div>;
 
+  const postSettings = getPostSettings(post);
   const rootComments = comments.filter((comment) => !comment.parentId);
   const repliesByParentId = new Map<string, Comment[]>();
   for (const comment of comments) {
@@ -3559,6 +5562,7 @@ function PostThreadPage({
       <PostCard
         activeUserId={activeUser?.id}
         commentCount={comments.length}
+        connectionSourcePostId={null}
         hasReposted={hasUserRepostedPost(post.id, activeUser?.id, postById)}
         isPinned={pinnedPostIds.has(post.id)}
         isSaved={savedPostIds.has(post.id)}
@@ -3569,6 +5573,7 @@ function PostThreadPage({
         wall={wallById.get(post.wallId)}
         onDelete={onDeletePost}
         onEdit={onEditPost}
+        onFinishConnection={() => undefined}
         onHide={onHidePost}
         onOpenPost={() => undefined}
         onOpenProfile={onOpenProfile}
@@ -3577,9 +5582,13 @@ function PostThreadPage({
         onRecordView={onRecordView}
         onReport={onReportPost}
         onRepost={onRepost}
+        onStartConnection={() => undefined}
+        onToggleChecklistItem={onToggleChecklistItem}
         onToggleSave={onToggleSave}
+        onVotePoll={onVotePoll}
       />
 
+      {postSettings.comments ? (
       <section className="comments-panel">
         <div className="panel-title">
           <MessageCircle size={17} />
@@ -3590,6 +5599,7 @@ function PostThreadPage({
         {activeUser ? (
           <Composer
             className="comment-composer"
+            objectTools={false}
             placeholder="Ответ"
             onPublish={(text, attachments) => onAddComment(post.id, undefined, text, attachments)}
           />
@@ -3618,6 +5628,15 @@ function PostThreadPage({
           )}
         </div>
       </section>
+      ) : (
+        <section className="comments-panel locked">
+          <div className="panel-title">
+            <MessageCircle size={17} />
+            <h2>Ответы закрыты</h2>
+          </div>
+          <div className="empty small">Автор отключил обсуждение.</div>
+        </section>
+      )}
     </section>
   );
 }
@@ -3772,6 +5791,7 @@ function CommentCard({
       {isReplying ? (
         <Composer
           className="comment-composer reply-composer"
+          objectTools={false}
           placeholder="Ответ"
           onPublish={(text, attachments) => {
             onReply(text, attachments);
@@ -4086,8 +6106,10 @@ function Leaderboard({
 function ProfilePage({
   activeUser,
   commentsByPostId,
+  connectionSourcePostId,
   followedUserIds,
   pinnedPostIds,
+  postConnections,
   postById,
   posts,
   profileWall,
@@ -4096,7 +6118,9 @@ function ProfilePage({
   userById,
   wallById,
   onDeletePost,
+  onDeletePostConnection,
   onEditPost,
+  onFinishPostConnection,
   onFollow,
   onHidePost,
   onOpenPost,
@@ -4109,12 +6133,17 @@ function ProfilePage({
   onRecordView,
   onReportPost,
   onRepost,
+  onStartPostConnection,
+  onToggleChecklistItem,
   onToggleSave,
+  onVotePoll,
 }: {
   activeUser: UserProfile | undefined;
   commentsByPostId: Map<string, Comment[]>;
+  connectionSourcePostId: string | null;
   followedUserIds: Set<string>;
   pinnedPostIds: Set<string>;
+  postConnections: PostConnection[];
   postById: Map<string, Post>;
   posts: Post[];
   profileWall: Wall | undefined;
@@ -4123,20 +6152,25 @@ function ProfilePage({
   userById: Map<string, UserProfile>;
   wallById: Map<string, Wall>;
   onDeletePost: (postId: string) => void;
-  onEditPost: (postId: string, text: string) => void;
+  onDeletePostConnection: (connectionId: string) => void;
+  onEditPost: (postId: string, text: string, options?: PostUpdatePayload) => void;
+  onFinishPostConnection: (postId: string) => void;
   onFollow: (userId: string) => void;
   onHidePost: (postId: string) => void;
   onOpenPost: (postId: string) => void;
   onOpenProfile: (profileId: string) => void;
   onOpenSettings: () => void;
   onPinPost: (postId: string) => void;
-  onPublish: (text: string, attachments: MediaAttachment[]) => void;
+  onPublish: (text: string, attachments: MediaAttachment[], options?: Partial<PostDraftOptions>) => void;
   onMovePost: (postId: string, x: number, y: number) => void;
   onReact: (postId: string, amount?: number) => void;
   onRecordView: (postId: string) => void;
   onReportPost: (postId: string) => void;
   onRepost: (postId: string) => void;
+  onStartPostConnection: (postId: string) => void;
+  onToggleChecklistItem: (postId: string, itemId: string) => void;
   onToggleSave: (postId: string) => void;
+  onVotePoll: (postId: string, optionId: string) => void;
 }) {
   if (!user) return <div className="empty">Профиль не найден</div>;
 
@@ -4165,7 +6199,7 @@ function ProfilePage({
             <div>
               <h1>{user.name}</h1>
               <p>{user.handle}</p>
-              <small className="profile-status">{getUserStatus(user)}</small>
+              <UserStatusLabel className="profile-status" forceOnline={isOwnProfile} user={user} />
             </div>
           </div>
           {(profileWall?.description || user.bio) ? <p>{profileWall?.description || user.bio}</p> : null}
@@ -4200,23 +6234,31 @@ function ProfilePage({
       <Composer
         className="desktop-composer field-composer board-composer"
         targetLabel={isOwnProfile ? "Моя доска" : `Доска ${user.name}`}
+        wall={profileWall}
         onPublish={onPublish}
       />
 
       <WallBoard
         activeUserId={activeUser?.id}
+        canMovePost={(post) => canMoveSharedPost(post, [...wallById.values()], activeUser?.id)}
         className="field-board space-field-board profile-field-board"
         commentsByPostId={commentsByPostId}
+        connectionSourcePostId={connectionSourcePostId}
+        dynamicFieldOffsets={false}
         emptyText="На этой доске пока нет заметок"
         hint="перетащи карточки по доске"
         pinnedPostIds={pinnedPostIds}
+        postConnections={postConnections}
         postById={postById}
         posts={userPosts}
+        resolveProtectedLayout={false}
         savedPostIds={savedPostIds}
         userById={userById}
         wallById={wallById}
         onDeletePost={onDeletePost}
+        onDeletePostConnection={onDeletePostConnection}
         onEditPost={onEditPost}
+        onFinishPostConnection={onFinishPostConnection}
         onHidePost={onHidePost}
         onMovePost={onMovePost}
         onOpenPost={onOpenPost}
@@ -4226,7 +6268,10 @@ function ProfilePage({
         onRecordView={onRecordView}
         onReportPost={onReportPost}
         onRepost={onRepost}
+        onStartPostConnection={onStartPostConnection}
+        onToggleChecklistItem={onToggleChecklistItem}
         onToggleSave={onToggleSave}
+        onVotePoll={onVotePoll}
       />
     </section>
   );
@@ -4415,18 +6460,223 @@ function MediaPreview({
   }
 
   if (attachment.type === "video") {
+    return <CustomVideoPlayer attachment={attachment} compact={compact} />;
+  }
+
+  if (compact) {
     return (
-      <video className="media video-media" src={attachment.url} controls={!compact} muted={compact} />
+      <div className="custom-audio-player compact" data-no-open>
+        <AudioLines size={16} />
+        <span className="audio-title">{attachment.name}</span>
+      </div>
     );
   }
 
+  return <CustomAudioPlayer attachment={attachment} />;
+}
+
+function CustomVideoPlayer({
+  attachment,
+  compact = false,
+}: {
+  attachment: MediaAttachment;
+  compact?: boolean;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isMuted, setIsMuted] = useState(compact);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const progress = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
+
+  function syncMetadata(target: HTMLVideoElement) {
+    setDuration(Number.isFinite(target.duration) ? target.duration : 0);
+    setCurrentTime(Number.isFinite(target.currentTime) ? target.currentTime : 0);
+  }
+
+  function togglePlay() {
+    const node = videoRef.current;
+    if (!node) return;
+
+    if (node.paused) {
+      void node.play().catch(() => setIsPlaying(false));
+      return;
+    }
+    node.pause();
+  }
+
+  function seek(value: string) {
+    const node = videoRef.current;
+    if (!node || duration <= 0) return;
+    const nextTime = (Number(value) / 100) * duration;
+    node.currentTime = nextTime;
+    setCurrentTime(nextTime);
+  }
+
+  function toggleMute() {
+    const node = videoRef.current;
+    if (!node) return;
+    const nextMuted = !node.muted;
+    node.muted = nextMuted;
+    setIsMuted(nextMuted);
+  }
+
+  function openFullscreen() {
+    const node = videoRef.current;
+    if (!node) return;
+    void node.requestFullscreen?.();
+  }
+
   return (
-    <div className="audio-media">
-      <AudioLines size={compact ? 16 : 22} />
-      <span>{attachment.name}</span>
-      {!compact ? <audio src={attachment.url} controls /> : null}
+    <div className={`custom-video-player ${compact ? "compact" : ""}`} data-no-open>
+      <button
+        type="button"
+        className="custom-video-shell"
+        onClick={togglePlay}
+        aria-label={isPlaying ? "Пауза" : "Воспроизвести видео"}
+      >
+        <video
+          ref={videoRef}
+          className="media custom-video"
+          src={attachment.url}
+          muted={isMuted}
+          preload="metadata"
+          playsInline
+          onLoadedMetadata={(event) => syncMetadata(event.currentTarget)}
+          onTimeUpdate={(event) => syncMetadata(event.currentTarget)}
+          onPlay={() => setIsPlaying(true)}
+          onPause={() => setIsPlaying(false)}
+          onEnded={() => setIsPlaying(false)}
+        />
+        {!isPlaying ? (
+          <span className="video-play-badge" aria-hidden="true">
+            <Play size={compact ? 18 : 24} fill="currentColor" />
+          </span>
+        ) : null}
+      </button>
+      {!compact ? (
+        <div className="video-controlbar" data-no-open>
+          <button type="button" className="media-control-button" onClick={togglePlay} aria-label={isPlaying ? "Пауза" : "Воспроизвести"}>
+            {isPlaying ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}
+          </button>
+          <span className="media-time">{formatMediaTime(currentTime)}</span>
+          <input
+            className="media-progress"
+            type="range"
+            min="0"
+            max="100"
+            value={progress}
+            onChange={(event) => seek(event.currentTarget.value)}
+            aria-label="Позиция видео"
+            style={{ "--media-progress": `${progress}%` } as CSSProperties}
+          />
+          <span className="media-time">{formatMediaTime(duration)}</span>
+          <button type="button" className="media-control-button" onClick={toggleMute} aria-label={isMuted ? "Включить звук" : "Выключить звук"}>
+            {isMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+          </button>
+          <button type="button" className="media-control-button" onClick={openFullscreen} aria-label="На весь экран">
+            <Maximize2 size={16} />
+          </button>
+        </div>
+      ) : null}
     </div>
   );
+}
+
+function CustomAudioPlayer({ attachment }: { attachment: MediaAttachment }) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const progress = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
+
+  function syncMetadata(target: HTMLAudioElement) {
+    setDuration(Number.isFinite(target.duration) ? target.duration : 0);
+    setCurrentTime(Number.isFinite(target.currentTime) ? target.currentTime : 0);
+  }
+
+  function togglePlay() {
+    const node = audioRef.current;
+    if (!node) return;
+
+    if (node.paused) {
+      void node.play().catch(() => setIsPlaying(false));
+      return;
+    }
+    node.pause();
+  }
+
+  function seek(value: string) {
+    const node = audioRef.current;
+    if (!node || duration <= 0) return;
+    const nextTime = (Number(value) / 100) * duration;
+    node.currentTime = nextTime;
+    setCurrentTime(nextTime);
+  }
+
+  function jump(delta: number) {
+    const node = audioRef.current;
+    if (!node) return;
+    const nextTime = Math.max(0, Math.min(duration || Number.MAX_SAFE_INTEGER, node.currentTime + delta));
+    node.currentTime = nextTime;
+    setCurrentTime(nextTime);
+  }
+
+  return (
+    <div className="custom-audio-player" data-no-open>
+      <audio
+        ref={audioRef}
+        src={attachment.url}
+        preload="metadata"
+        onLoadedMetadata={(event) => syncMetadata(event.currentTarget)}
+        onTimeUpdate={(event) => syncMetadata(event.currentTarget)}
+        onPlay={() => setIsPlaying(true)}
+        onPause={() => setIsPlaying(false)}
+        onEnded={() => setIsPlaying(false)}
+      />
+      <div className="audio-player-head">
+        <button type="button" className="audio-play-button" onClick={togglePlay} aria-label={isPlaying ? "Пауза" : "Воспроизвести аудио"}>
+          {isPlaying ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" />}
+        </button>
+        <div className="audio-copy">
+          <span className="audio-title">{attachment.name}</span>
+          <small>{formatMediaTime(currentTime)} / {formatMediaTime(duration)}</small>
+        </div>
+        <a className="media-control-button" href={attachment.url} download={attachment.name} aria-label="Скачать аудио">
+          <Download size={16} />
+        </a>
+      </div>
+      <div className="audio-wave" aria-hidden="true">
+        {Array.from({ length: 18 }, (_, index) => <span key={index} />)}
+      </div>
+      <div className="audio-controls">
+        <button type="button" className="media-control-button" onClick={() => jump(-10)} aria-label="Назад на 10 секунд">
+          <SkipBack size={16} />
+        </button>
+        <input
+          className="media-progress"
+          type="range"
+          min="0"
+          max="100"
+          value={progress}
+          onChange={(event) => seek(event.currentTarget.value)}
+          aria-label="Позиция аудио"
+          style={{ "--media-progress": `${progress}%` } as CSSProperties}
+        />
+        <button type="button" className="media-control-button" onClick={() => jump(10)} aria-label="Вперёд на 10 секунд">
+          <SkipForward size={16} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function formatMediaTime(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "0:00";
+  const totalSeconds = Math.floor(value);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = String(totalSeconds % 60).padStart(2, "0");
+  return `${minutes}:${seconds}`;
 }
 
 type UserStat = {
@@ -4657,10 +6907,79 @@ function createGuestUser(): UserProfile {
     name: "Гость",
     handle: "@guest",
     bio: "Пишет без привязки к Discord.",
-    status: "Онлайн",
     joinedAt: Date.now(),
     timeOnSiteMinutes: 0,
   };
+}
+
+let anonymousGuestCache: UserProfile | null = null;
+
+function getAnonymousGuestUser(): UserProfile {
+  if (anonymousGuestCache) return anonymousGuestCache;
+
+  const stored = readStoredAnonymousGuestUser();
+  anonymousGuestCache = stored ?? createAnonymousGuestUser();
+  writeStoredAnonymousGuestUser(anonymousGuestCache);
+  return anonymousGuestCache;
+}
+
+function createAnonymousGuestUser(existing?: Partial<UserProfile>): UserProfile {
+  const token = getAnonymousGuestToken(existing?.id);
+  const visibleCode = token.slice(0, 4).toUpperCase();
+  const name = typeof existing?.name === "string" && existing.name.trim() && existing.name.trim() !== "Гость"
+    ? existing.name.trim().slice(0, 32)
+    : `Гость ${visibleCode}`;
+
+  return {
+    id: `${anonymousGuestPrefix}${token}`,
+    name,
+    handle: `@guest-${token.slice(0, 6)}`,
+    bio: typeof existing?.bio === "string" && existing.bio.trim()
+      ? existing.bio.trim().slice(0, 160)
+      : "Пишет без привязки к Discord.",
+    status: typeof existing?.status === "string" && existing.status.trim() && existing.status.trim() !== "Онлайн"
+      ? existing.status.trim().slice(0, 40)
+      : undefined,
+    joinedAt: Number(existing?.joinedAt) || Date.now(),
+    lastSeenAt: Number(existing?.lastSeenAt) || Date.now(),
+    timeOnSiteMinutes: Math.max(0, Number(existing?.timeOnSiteMinutes) || 0),
+    avatarUrl: typeof existing?.avatarUrl === "string" ? existing.avatarUrl : undefined,
+    provider: "local",
+  };
+}
+
+function getAnonymousGuestToken(candidateId: unknown): string {
+  if (typeof candidateId === "string" && candidateId.startsWith(anonymousGuestPrefix)) {
+    const token = candidateId.slice(anonymousGuestPrefix.length).replace(/[^a-z0-9]/gi, "").toLowerCase();
+    if (token.length >= 6) return token.slice(0, 12);
+  }
+
+  return crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+}
+
+function readStoredAnonymousGuestUser(): UserProfile | null {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw = localStorage.getItem(anonymousGuestStorageKey);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as Partial<UserProfile>;
+    if (typeof parsed.id !== "string" || !parsed.id.startsWith(anonymousGuestPrefix)) return null;
+    return createAnonymousGuestUser(parsed);
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredAnonymousGuestUser(user: UserProfile): void {
+  if (typeof window === "undefined") return;
+
+  try {
+    localStorage.setItem(anonymousGuestStorageKey, JSON.stringify(user));
+  } catch {
+    // A missing cached anonymous profile should not block the app.
+  }
 }
 
 function ensureGuestUser(users: UserProfile[]): UserProfile[] {
@@ -4668,43 +6987,175 @@ function ensureGuestUser(users: UserProfile[]): UserProfile[] {
   return [createGuestUser(), ...users];
 }
 
+function ensureAnonymousGuestUser(users: UserProfile[], anonymousGuest = getAnonymousGuestUser()): UserProfile[] {
+  return upsertUser(users, anonymousGuest);
+}
+
+function ensureLocalGuestUsers(users: UserProfile[], anonymousGuest = getAnonymousGuestUser()): UserProfile[] {
+  return ensureAnonymousGuestUser(ensureGuestUser(users), anonymousGuest);
+}
+
+function upsertUser(users: UserProfile[], user: UserProfile): UserProfile[] {
+  const existingIndex = users.findIndex((item) => item.id === user.id);
+  if (existingIndex === -1) return [user, ...users];
+
+  return users.map((item, index) => index === existingIndex ? { ...item, ...user } : item);
+}
+
+function touchActiveUserPresence(current: SocialState, now = Date.now(), minutesToAdd = 0): SocialState {
+  let changed = false;
+  const users = current.users.map((user) => {
+    if (user.id !== current.activeUserId) return user;
+    changed = true;
+    const nextUser = {
+      ...user,
+      lastSeenAt: now,
+      timeOnSiteMinutes: user.timeOnSiteMinutes + minutesToAdd,
+    };
+    if (nextUser.id.startsWith(anonymousGuestPrefix)) {
+      anonymousGuestCache = nextUser;
+      writeStoredAnonymousGuestUser(nextUser);
+    }
+    return nextUser;
+  });
+
+  return changed ? { ...current, users } : current;
+}
+
+function readFieldLayouts(): FieldLayoutState {
+  if (typeof window === "undefined") return {};
+
+  try {
+    const raw = localStorage.getItem(fieldLayoutStorageKey);
+    if (!raw) return {};
+
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+
+    return Object.entries(parsed).reduce<FieldLayoutState>((layouts, [userId, value]) => {
+      if (!userId || !value || typeof value !== "object" || Array.isArray(value)) return layouts;
+
+      const positions = Object.entries(value).reduce<Record<string, PostPosition>>((items, [postId, position]) => {
+        const normalized = normalizeFieldLayoutPosition(position);
+        if (normalized) items[postId] = normalized;
+        return items;
+      }, {});
+
+      if (Object.keys(positions).length > 0) layouts[userId] = positions;
+      return layouts;
+    }, {});
+  } catch {
+    return {};
+  }
+}
+
+function writeFieldLayouts(layouts: FieldLayoutState): void {
+  if (typeof window === "undefined") return;
+
+  try {
+    localStorage.setItem(fieldLayoutStorageKey, JSON.stringify(layouts));
+  } catch {
+    // The field layout is personal UI state; losing it must not block publishing.
+  }
+}
+
+function readPinnedWalls(): PinnedWallState {
+  if (typeof window === "undefined") return {};
+
+  try {
+    const raw = localStorage.getItem(pinnedWallStorageKey);
+    if (!raw) return {};
+
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+
+    return Object.entries(parsed).reduce<PinnedWallState>((state, [userId, value]) => {
+      if (!userId || !Array.isArray(value)) return state;
+      const ids = value
+        .filter((id): id is string => typeof id === "string" && id.startsWith("space:"))
+        .slice(0, 12);
+      if (ids.length > 0) state[userId] = Array.from(new Set(ids));
+      return state;
+    }, {});
+  } catch {
+    return {};
+  }
+}
+
+function writePinnedWalls(pinned: PinnedWallState): void {
+  if (typeof window === "undefined") return;
+
+  try {
+    localStorage.setItem(pinnedWallStorageKey, JSON.stringify(pinned));
+  } catch {
+    // Pinned boards are a personal navigation preference.
+  }
+}
+
+function normalizeFieldLayoutPosition(value: unknown): PostPosition | null {
+  if (!value || typeof value !== "object") return null;
+  const position = value as Partial<PostPosition>;
+  const x = Number(position.x);
+  const y = Number(position.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return clampPostPosition({ x, y });
+}
+
 function normalizeLocalSession(current: SocialState): SocialState {
-  const users = ensureGuestUser(current.users);
+  const anonymousGuest = getAnonymousGuestUser();
+  const users = ensureLocalGuestUsers(current.users, anonymousGuest);
   const hasDiscordSession = Boolean(readStoredDiscordSession());
   const activeUserId = hasDiscordSession
     ? current.activeUserId
     : current.activeUserId === "rub1kub"
-      ? guestUserId
-      : current.activeUserId;
+      ? anonymousGuest.id
+      : current.activeUserId.startsWith("discord:")
+        ? anonymousGuest.id
+        : current.activeUserId === guestUserId
+          ? anonymousGuest.id
+          : current.activeUserId;
 
   return {
     ...current,
     users,
-    activeUserId: users.some((user) => user.id === activeUserId) ? activeUserId : guestUserId,
+    activeUserId: users.some((user) => user.id === activeUserId) ? activeUserId : anonymousGuest.id,
   };
 }
 
 function mergeSharedStateWithLocalSession(current: SocialState, shared: SocialState): SocialState {
-  const currentUsers = ensureGuestUser(current.users);
-  const sharedUsers = ensureGuestUser(shared.users);
-  const activeUser = currentUsers.find((user) => user.id === current.activeUserId);
-  const hasActiveUserInSharedState = sharedUsers.some((user) => user.id === current.activeUserId);
-  const users = activeUser && !hasActiveUserInSharedState ? [activeUser, ...sharedUsers] : sharedUsers;
+  const anonymousGuest = getAnonymousGuestUser();
+  const currentUsers = ensureLocalGuestUsers(current.users, anonymousGuest);
+  const sharedUsers = ensureLocalGuestUsers(shared.users, anonymousGuest);
+  const activeUser = currentUsers.find((user) => user.id === current.activeUserId) ?? anonymousGuest;
+  const users = upsertUser(sharedUsers, activeUser);
   const activeUserId = users.some((user) => user.id === current.activeUserId)
     ? current.activeUserId
-    : guestUserId;
+    : anonymousGuest.id;
 
   return {
     ...shared,
     users,
+    posts: mergeSharedPostsWithLocalOptimism(current.posts, shared.posts),
     activeUserId,
   };
+}
+
+function mergeSharedPostsWithLocalOptimism(currentPosts: Post[], sharedPosts: Post[]): Post[] {
+  const currentById = new Map(currentPosts.map((post) => [post.id, post]));
+
+  return sharedPosts.map((post) => {
+    const currentPost = currentById.get(post.id);
+    if (!currentPost) return post;
+    const reactions = Math.max(post.reactions, currentPost.reactions);
+    if (reactions === post.reactions) return post;
+    return { ...post, reactions };
+  });
 }
 
 function prepareSharedStateForWrite(current: SocialState): SocialState {
   return {
     ...current,
-    users: ensureGuestUser(current.users),
+    users: ensureLocalGuestUsers(current.users),
     activeUserId: guestUserId,
   };
 }
@@ -4713,7 +7164,7 @@ function activateDiscordProfile(current: SocialState, session: DiscordSession): 
   const profileId = `discord:${session.user.id}`;
   const existing = current.users.find((user) => user.id === profileId);
   const profile = discordSessionToProfile(session, existing);
-  const currentUsers = ensureGuestUser(current.users);
+  const currentUsers = ensureLocalGuestUsers(current.users);
   const users = existing
     ? currentUsers.map((user) => (user.id === profile.id ? profile : user))
     : [profile, ...currentUsers];
@@ -4741,9 +7192,18 @@ function formatMinutes(minutes: number): string {
   return rest ? `${hours}ч ${rest}м` : `${hours}ч`;
 }
 
-function getUserStatus(user: UserProfile | undefined): string {
-  const status = user?.status?.trim();
-  return status || "Онлайн";
+function getUserStatus(user: UserProfile | undefined, forceOnline = false): string {
+  if (user && forceOnline) return "Онлайн";
+
+  const lastSeenAt = Number(user?.lastSeenAt);
+  if (!Number.isFinite(lastSeenAt) || lastSeenAt <= 0) {
+    return "Не заходил";
+  }
+
+  const diff = Date.now() - lastSeenAt;
+  if (diff <= userOnlineWindowMs) return "Онлайн";
+  if (diff <= userRecentlySeenWindowMs) return `Был ${formatRelativeTime(lastSeenAt)}`;
+  return `Был ${formatRelativeTime(lastSeenAt)}`;
 }
 
 function formatCompactNumber(value: number): string {
@@ -4757,11 +7217,159 @@ function getPostViewCount(post: Post): number {
   return post.views.uniqueUserIds.length;
 }
 
+function createDefaultPostDraftOptions(): PostDraftOptions {
+  return {
+    appearance: { ...defaultPostAppearance },
+    checklist: [],
+    kind: "note",
+    settings: { ...defaultPostSettings },
+    sketch: [],
+  };
+}
+
+function createDefaultPoll(text = ""): PostPoll {
+  return {
+    question: text.trim().slice(0, 160) || "Голосование",
+    multi: false,
+    options: [
+      { id: crypto.randomUUID(), text: "Да", voterIds: [] },
+      { id: crypto.randomUUID(), text: "Нет", voterIds: [] },
+    ],
+  };
+}
+
+function buildPostDraftOptionsFromPost(post: Post): PostDraftOptions {
+  return normalizePostDraftOptions({
+    appearance: post.appearance,
+    checklist: post.checklist,
+    kind: post.kind,
+    poll: post.poll,
+    settings: post.settings,
+    sketch: post.sketch,
+  }, post.attachments);
+}
+
+function normalizePostDraftOptions(
+  options: Partial<PostDraftOptions> | undefined,
+  _attachments: MediaAttachment[] = [],
+): PostDraftOptions {
+  const kind = getAllowedPostKind(options?.kind) ?? "note";
+  const settings = {
+    ...defaultPostSettings,
+    ...(options?.settings ?? {}),
+  };
+  const appearance = {
+    ...defaultPostAppearance,
+    ...(options?.appearance ?? {}),
+  };
+  const checklist = (options?.checklist ?? [])
+    .map((item) => ({
+      id: item.id || crypto.randomUUID(),
+      text: item.text.trim().slice(0, 120),
+      checkedBy: Array.from(new Set(item.checkedBy ?? [])),
+    }))
+    .filter((item) => item.text)
+    .slice(0, 24);
+  const sketch = (options?.sketch ?? [])
+    .filter((stroke) => stroke.points.length > 1)
+    .slice(0, 80);
+  const poll = normalizeDraftPoll(options?.poll);
+
+  return {
+    appearance: {
+      accentColor: normalizeOptionalWallAccentValue(appearance.accentColor),
+      background: ["plain", "soft", "glass", "gradient", "paper"].includes(appearance.background)
+        ? appearance.background
+        : "plain",
+      shape: ["soft", "round", "sharp", "ticket"].includes(appearance.shape) ? appearance.shape : "soft",
+      size: ["compact", "normal", "wide", "tall"].includes(appearance.size) ? appearance.size : "normal",
+    },
+    checklist,
+    kind,
+    poll,
+    settings,
+    sketch,
+  };
+}
+
+function normalizeDraftPoll(poll: PostPoll | undefined): PostPoll | undefined {
+  if (!poll) return undefined;
+  const options = poll.options
+    .map((option) => ({
+      id: option.id || crypto.randomUUID(),
+      text: option.text.trim().slice(0, 90),
+      voterIds: Array.from(new Set(option.voterIds ?? [])),
+    }))
+    .filter((option) => option.text)
+    .slice(0, 8);
+
+  if (options.length < 2) return undefined;
+
+  return {
+    question: poll.question.trim().slice(0, 160) || "Голосование",
+    multi: poll.multi,
+    options,
+  };
+}
+
+function hasPublishablePostDraft(
+  text: string,
+  attachments: MediaAttachment[],
+  options: PostDraftOptions,
+): boolean {
+  return Boolean(
+    text.trim() ||
+      attachments.length > 0 ||
+      options.sketch.length > 0 ||
+      options.checklist.some((item) => item.text.trim()) ||
+      (options.poll && options.poll.options.length >= 2),
+  );
+}
+
+function getAllowedPostKind(kind: unknown): PostKind | undefined {
+  return postKindOptions.some((item) => item.id === kind) ? kind as PostKind : undefined;
+}
+
+function getPostKind(post: Post): PostKind {
+  return getAllowedPostKind(post.kind) ?? "note";
+}
+
+function getPostSettings(post: Post | undefined): PostInteractionSettings {
+  return {
+    ...defaultPostSettings,
+    ...(post?.settings ?? {}),
+  };
+}
+
+function getPostAppearance(post: Post | undefined): PostAppearance {
+  return {
+    ...defaultPostAppearance,
+    ...(post?.appearance ?? {}),
+  };
+}
+
+function getPostAccentStyle(appearance: PostAppearance, wall: Wall | undefined): CSSProperties {
+  const accentOption = getWallAccentOption(appearance.accentColor ?? wall?.accentColor ?? wallAccentOptions[0].id);
+
+  return {
+    "--post-accent": accentOption.accent,
+    "--post-accent-2": accentOption.accent2,
+    "--post-accent-soft": accentOption.soft,
+  } as CSSProperties;
+}
+
+function strokeToPath(points: SketchPoint[]): string {
+  if (points.length === 0) return "";
+  return points
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
+    .join(" ");
+}
+
 function normalizeRuntimeBoardCopy(current: SocialState): SocialState {
   let changed = false;
   const users = current.users.map((user) => {
     const bio = normalizeBoardCopyText(user.bio);
-    const status = user.status?.trim() || "Онлайн";
+    const status = user.status?.trim() === "Онлайн" ? undefined : user.status?.trim();
     if (bio === user.bio && status === user.status) return user;
     changed = true;
     return { ...user, bio, status };
@@ -4937,28 +7545,149 @@ function clampPostPosition(position: PostPosition, maxX = 1800, maxY = 2200): Po
   };
 }
 
-function getDefaultBoardPosition(index: number, offsetX = 0): PostPosition {
-  const column = index % 3;
-  const row = Math.floor(index / 3);
+function getBoardColumnCount(maxX = 1800, offsetX = 0): number {
+  const availableWidth = Math.max(0, maxX - offsetX);
+  return Math.max(1, Math.min(3, Math.floor(availableWidth / (boardCardWidth + boardGap)) + 1));
+}
+
+function getDefaultBoardPosition(index: number, offsetX = 0, maxX = 1800, offsetY = 0): PostPosition {
+  const columns = getBoardColumnCount(maxX, offsetX);
+  const column = index % columns;
+  const row = Math.floor(index / columns);
   return {
     x: offsetX + column * (boardCardWidth + boardGap),
-    y: row * (boardCardHeight + boardGap),
+    y: offsetY + row * (boardCardHeight + boardGap),
   };
 }
 
-function resolveBoardPostLayout(posts: Post[], maxX = 1800, defaultOffsetX = 0): Array<{ post: Post; position: PostPosition }> {
-  const placed: PostPosition[] = [];
+function getEstimatedBoardCardHeight(post: Post): number {
+  return getEstimatedDraftPostHeight(post);
+}
+
+function getEstimatedBoardCardWidth(post: Post): number {
+  if (post.id === minecraftDownloadPostId && post.wallId === minecraftWallId) return 540;
+
+  switch (getPostAppearance(post).size) {
+    case "compact":
+      return 276;
+    case "wide":
+      return 480;
+    case "tall":
+      return 342;
+    default:
+      return boardCardWidth;
+  }
+}
+
+function getEstimatedDraftPostWidth(
+  post: Partial<Pick<Post, "appearance" | "id" | "wallId">>,
+): number {
+  if (post.id === minecraftDownloadPostId && post.wallId === minecraftWallId) return 540;
+
+  switch (getPostAppearance(post as Post).size) {
+    case "compact":
+      return 276;
+    case "wide":
+      return 480;
+    case "tall":
+      return 342;
+    default:
+      return boardCardWidth;
+  }
+}
+
+function getBoardMaxXForWidth(maxX: number, width = boardCardWidth): number {
+  return Math.max(0, maxX - Math.max(0, width - boardCardWidth));
+}
+
+function getEstimatedDraftPostHeight(
+  post: Pick<Post, "attachments" | "text"> &
+    Partial<Pick<Post, "appearance" | "checklist" | "id" | "poll" | "repostOfId" | "sketch" | "wallId">>,
+): number {
+  if (post.id === minecraftDownloadPostId && post.wallId === minecraftWallId) return 332;
+
+  let height = boardCardHeight;
+  const textLength = post.text.trim().length;
+  const appearance = getPostAppearance(post as Post);
+
+  if (textLength > 90) {
+    height += Math.min(120, Math.ceil((textLength - 90) / 44) * 22);
+  }
+
+  if (appearance.size === "compact") height -= 24;
+  if (appearance.size === "tall") height += 120;
+
+  if (post.attachments.length > 0) {
+    height += post.attachments.length === 1 ? 300 : 220;
+  }
+
+  if ((post.sketch?.length ?? 0) > 0) {
+    height += 170;
+  }
+
+  if ((post.checklist?.length ?? 0) > 0) {
+    height += Math.min(220, 42 + (post.checklist?.length ?? 0) * 36);
+  }
+
+  if (post.poll) {
+    height += 86 + post.poll.options.length * 44;
+  }
+
+  if (post.repostOfId) {
+    height += 118;
+  }
+
+  return Math.max(boardCardHeight, Math.min(680, height));
+}
+
+function resolveBoardPostLayout(
+  posts: Post[],
+  {
+    defaultOffsetX = 0,
+    defaultOffsetY = 0,
+    maxX = 1800,
+    positionOverrides,
+    usePostPositions = true,
+  }: BoardLayoutOptions = {},
+): BoardLayoutItem[] {
+  const placed: BoardRect[] = [];
 
   return posts.map((post, index) => {
-    const desiredPosition = clampPostPosition(post.position ?? getDefaultBoardPosition(index, defaultOffsetX), maxX);
-    const position = findOpenBoardPosition(desiredPosition, placed, index, maxX, defaultOffsetX);
-    placed.push(position);
+    const height = getEstimatedBoardCardHeight(post);
+    const width = getEstimatedBoardCardWidth(post);
+    const savedPosition = positionOverrides?.[post.id] ?? (usePostPositions ? post.position : undefined);
+    const desiredPosition = clampPostPosition(
+      savedPosition ?? getDefaultBoardPosition(index, defaultOffsetX, maxX, defaultOffsetY),
+      getBoardMaxXForWidth(maxX, width),
+    );
+    const position = savedPosition
+      ? desiredPosition
+      : findOpenBoardPosition(
+          desiredPosition,
+          placed,
+          index,
+          maxX,
+          defaultOffsetX,
+          defaultOffsetY,
+          height,
+          width,
+        );
+    placed.push(postPositionToRect(position, height, width));
 
-    return { post, position };
+    return { height, post, position, width };
   });
 }
 
-function getNewBoardPostPosition(existingPosts: Post[]): PostPosition {
+function getNewBoardPostPosition(
+  existingPosts: Post[],
+  draft: Pick<Post, "attachments" | "text"> &
+    Partial<Pick<Post, "appearance" | "checklist" | "poll" | "repostOfId" | "sketch">> = {
+    attachments: [],
+    text: "",
+  },
+): PostPosition {
+  const nextHeight = getEstimatedDraftPostHeight(draft);
+  const nextWidth = getEstimatedDraftPostWidth(draft);
   const board = typeof document !== "undefined"
     ? document.querySelector<HTMLElement>(".field-board")
     : null;
@@ -4966,24 +7695,41 @@ function getNewBoardPostPosition(existingPosts: Post[]): PostPosition {
     const maxX = typeof window !== "undefined"
       ? Math.max(0, window.innerWidth - boardCardWidth - boardGap)
       : 1800;
-    const placed = resolveBoardPostLayout(existingPosts, maxX).map(({ position }) => position);
+    const placed = resolveBoardPostLayout(existingPosts, { maxX }).map(({ height, position, width }) =>
+      postPositionToRect(position, height, width),
+    );
     return findOpenBoardPosition(
       getFallbackNewBoardPosition(existingPosts.length),
       placed,
       existingPosts.length,
       maxX,
+      0,
+      0,
+      nextHeight,
+      nextWidth,
     );
   }
 
   const boardWidth = board?.getBoundingClientRect().width ?? 0;
   const maxX = boardWidth > 0 ? Math.max(0, boardWidth - boardCardWidth - boardGap) : 1800;
   const protectedRects = board ? getFieldProtectedRects(board) : [];
-  const placed = resolveBoardPostLayout(existingPosts, maxX).map(({ position }) => position);
+  const placed = resolveBoardPostLayout(existingPosts, { maxX }).map(({ height, position, width }) =>
+    postPositionToRect(position, height, width),
+  );
   const desiredPosition =
     getComposerDropPosition(board) ??
-    findOpenBoardPosition(getDefaultBoardPosition(existingPosts.length), placed, existingPosts.length, maxX);
+    findOpenBoardPosition(
+      getDefaultBoardPosition(existingPosts.length, 0, maxX),
+      placed,
+      existingPosts.length,
+      maxX,
+      0,
+      0,
+      nextHeight,
+      nextWidth,
+    );
 
-  return resolveSafeBoardPosition(desiredPosition, protectedRects, placed, maxX);
+  return resolveSafeBoardPosition(desiredPosition, protectedRects, placed, maxX, nextHeight, nextWidth);
 }
 
 function getFallbackNewBoardPosition(index: number): PostPosition {
@@ -5009,30 +7755,39 @@ function getComposerDropPosition(board: HTMLElement | null): PostPosition | null
 }
 
 function resolveSafeBoardLayout(
-  layout: Array<{ post: Post; position: PostPosition }>,
+  layout: BoardLayoutItem[],
   protectedRects: BoardRect[],
   maxX = 1800,
-): Array<{ post: Post; position: PostPosition }> {
-  if (protectedRects.length === 0) return layout;
+): BoardLayoutItem[] {
+  if (protectedRects.length === 0) {
+    const placed: BoardRect[] = [];
+    return layout.map((item, index) => {
+      const position = findOpenBoardPosition(item.position, placed, index, maxX, 0, 0, item.height, item.width);
+      placed.push(postPositionToRect(position, item.height, item.width));
+      return { ...item, position };
+    });
+  }
 
-  const placed: PostPosition[] = [];
-  return layout.map(({ post, position }) => {
-    const safePosition = resolveSafeBoardPosition(position, protectedRects, placed, maxX);
-    placed.push(safePosition);
-    return { post, position: safePosition };
+  const placed: BoardRect[] = [];
+  return layout.map((item) => {
+    const safePosition = resolveSafeBoardPosition(item.position, protectedRects, placed, maxX, item.height, item.width);
+    placed.push(postPositionToRect(safePosition, item.height, item.width));
+    return { ...item, position: safePosition };
   });
 }
 
 function resolveSafeBoardPosition(
   position: PostPosition,
   protectedRects: BoardRect[],
-  placed: PostPosition[] = [],
+  placed: BoardRect[] = [],
   maxX = 1800,
+  height = boardCardHeight,
+  width = boardCardWidth,
 ): PostPosition {
-  let candidate = clampPostPosition(position, maxX);
+  let candidate = clampPostPosition(position, getBoardMaxXForWidth(maxX, width));
 
   for (let attempt = 0; attempt < 80; attempt += 1) {
-    const blocker = findBoardPositionBlocker(candidate, protectedRects, placed);
+    const blocker = findBoardPositionBlocker(candidate, protectedRects, placed, height, width);
     if (!blocker) return candidate;
 
     const variants = [
@@ -5040,10 +7795,10 @@ function resolveSafeBoardPosition(
       { x: candidate.x, y: blocker.y + blocker.height },
       { x: blocker.x + blocker.width, y: blocker.y + blocker.height },
     ]
-      .map((item) => clampPostPosition(item, maxX))
+      .map((item) => clampPostPosition(item, getBoardMaxXForWidth(maxX, width)))
       .sort((a, b) => getPositionDistance(position, a) - getPositionDistance(position, b));
 
-    candidate = variants.find((item) => !doesBoardRectOverlap(postPositionToRect(item), blocker)) ?? variants[0];
+    candidate = variants.find((item) => !doesBoardRectOverlap(postPositionToRect(item, height, width), blocker)) ?? variants[0];
   }
 
   return candidate;
@@ -5052,22 +7807,23 @@ function resolveSafeBoardPosition(
 function findBoardPositionBlocker(
   position: PostPosition,
   protectedRects: BoardRect[],
-  placed: PostPosition[],
+  placed: BoardRect[],
+  height = boardCardHeight,
+  width = boardCardWidth,
 ): BoardRect | undefined {
-  const rect = postPositionToRect(position);
+  const rect = postPositionToRect(position, height, width);
   const protectedBlocker = protectedRects.find((item) => doesBoardRectOverlap(rect, item));
   if (protectedBlocker) return protectedBlocker;
 
-  const placedPosition = placed.find((item) => hasBoardPositionOverlap(position, [item]));
-  return placedPosition ? postPositionToRect(placedPosition) : undefined;
+  return placed.find((item) => doesBoardRectOverlap(rect, item));
 }
 
-function postPositionToRect(position: PostPosition): BoardRect {
+function postPositionToRect(position: PostPosition, height = boardCardHeight, width = boardCardWidth): BoardRect {
   return {
     x: position.x,
     y: position.y,
-    width: boardCardWidth,
-    height: boardCardHeight,
+    width,
+    height,
   };
 }
 
@@ -5082,16 +7838,47 @@ function getPositionDistance(origin: PostPosition, candidate: PostPosition): num
   return Math.abs(origin.x - candidate.x) + Math.abs(origin.y - candidate.y);
 }
 
+function getInitialFieldBoardDefaultX(): number {
+  if (typeof window === "undefined" || window.innerWidth < 760) return 0;
+  return 250;
+}
+
+function getInitialFieldBoardDefaultY(hasDirectory = true): number {
+  if (typeof window === "undefined" || window.innerWidth < 760) return hasDirectory ? 320 : 230;
+  return hasDirectory ? 360 : 250;
+}
+
+function getFieldBoardContentStartY(board: HTMLElement): number {
+  const boardRect = board.getBoundingClientRect();
+  const selectors = [
+    ".field-create-popover",
+    ".board-directory",
+    ".field-toolbelt",
+    ".field-filterbar",
+    ".field-command",
+    ".topbar",
+  ];
+  const bottom = selectors.reduce((maxBottom, selector) => {
+    const element = document.querySelector<HTMLElement>(selector);
+    if (!element) return maxBottom;
+    const rect = element.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return maxBottom;
+    return Math.max(maxBottom, rect.bottom - boardRect.top + boardGap);
+  }, 0);
+
+  return Math.max(0, Math.round(bottom));
+}
+
 function getFieldProtectedRects(board: HTMLElement): BoardRect[] {
   const boardRect = board.getBoundingClientRect();
   const selectors = [
     ".site-panel",
-    ".topbar",
+    ".topbar .search",
     ".field-command",
     ".field-filterbar",
     ".field-toolbelt",
     ".field-create-popover",
-    ".board-directory",
+    ".board-directory > .field-object",
     ".field-wall-cover",
     ".board-composer",
     ".profile-bio",
@@ -5116,57 +7903,70 @@ function getFieldProtectedRects(board: HTMLElement): BoardRect[] {
 
 function findOpenBoardPosition(
   desiredPosition: PostPosition,
-  placed: PostPosition[],
+  placed: BoardRect[],
   index: number,
   maxX = 1800,
   defaultOffsetX = 0,
+  defaultOffsetY = 0,
+  height = boardCardHeight,
+  width = boardCardWidth,
 ): PostPosition {
-  if (!hasBoardPositionOverlap(desiredPosition, placed)) return desiredPosition;
+  if (!hasBoardPositionOverlap(desiredPosition, placed, height, width)) return desiredPosition;
 
-  const defaultPosition = clampPostPosition(getDefaultBoardPosition(index, defaultOffsetX), maxX);
-  if (!hasBoardPositionOverlap(defaultPosition, placed)) return defaultPosition;
+  const defaultPosition = clampPostPosition(getDefaultBoardPosition(index, defaultOffsetX, maxX, defaultOffsetY), getBoardMaxXForWidth(maxX, width));
+  if (!hasBoardPositionOverlap(defaultPosition, placed, height, width)) return defaultPosition;
 
-  const columns = 3;
+  const columns = getBoardColumnCount(maxX, defaultOffsetX);
   const startRow = Math.floor(index / columns);
+  const rowStep = boardGridSize;
 
-  for (let rowOffset = 0; rowOffset < 60; rowOffset += 1) {
+  for (let rowOffset = 0; rowOffset < 220; rowOffset += 1) {
     for (let column = 0; column < columns; column += 1) {
       const candidate = clampPostPosition({
         x: defaultOffsetX + column * (boardCardWidth + boardGap),
-        y: (startRow + rowOffset) * (boardCardHeight + boardGap),
-      }, maxX);
+        y: defaultOffsetY + (startRow * Math.ceil((boardCardHeight + boardGap) / rowStep) + rowOffset) * rowStep,
+      }, getBoardMaxXForWidth(maxX, width));
 
-      if (!hasBoardPositionOverlap(candidate, placed)) return candidate;
+      if (!hasBoardPositionOverlap(candidate, placed, height, width)) return candidate;
     }
   }
 
   return clampPostPosition({
     x: defaultOffsetX,
-    y: (startRow + 60) * (boardCardHeight + boardGap),
-  }, maxX);
+    y: defaultOffsetY + (startRow + 220) * rowStep,
+  }, getBoardMaxXForWidth(maxX, width));
 }
 
-function hasBoardPositionOverlap(position: PostPosition, placed: PostPosition[]): boolean {
-  return placed.some(
-    (other) =>
-      Math.abs(position.x - other.x) < boardCardWidth + boardGap &&
-      Math.abs(position.y - other.y) < boardCardHeight + boardGap,
-  );
+function hasBoardPositionOverlap(position: PostPosition, placed: BoardRect[], height = boardCardHeight, width = boardCardWidth): boolean {
+  const rect = postPositionToRect(position, height, width);
+  const paddedRect = {
+    ...rect,
+    x: rect.x - boardGap,
+    y: rect.y - boardGap,
+    width: rect.width + boardGap * 2,
+    height: rect.height + boardGap * 2,
+  };
+
+  return placed.some((other) => doesBoardRectOverlap(paddedRect, other));
 }
 
-function getBoardCanvasHeight(posts: Post[]): number {
-  const postLayout = resolveBoardPostLayout(posts);
+function getBoardCanvasHeight(posts: Post[], options?: BoardLayoutOptions): number {
+  const postLayout = resolveBoardPostLayout(posts, options);
 
   return Math.max(
     720,
-    ...postLayout.map(({ position }) => position.y + boardCardHeight + boardGap),
+    ...postLayout.map(({ height, position }) => position.y + height + boardGap),
   );
 }
 
-function isDragIgnored(target: EventTarget | null): boolean {
+function isPostOpenIgnored(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
-  if (target.closest("[data-drag-handle]")) return false;
-  return Boolean(target.closest("button, a, input, textarea, select, audio, video, [data-no-drag]"));
+  return Boolean(target.closest("button, a, input, textarea, select, audio, video, .post-menu, .media-grid, [data-no-open]"));
+}
+
+function isPostConnectionClickIgnored(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  return Boolean(target.closest("input, textarea, select, audio, video, .post-menu, .post-menu-trigger, [data-no-open]"));
 }
 
 function getDefaultMinecraftDownloadPosition(): PostPosition {
@@ -5188,11 +7988,23 @@ function formatWallInitial(value: string): string {
   return value.trim().slice(0, 1).toUpperCase() || "#";
 }
 
-function getWallAccentOption(value: string | undefined): typeof wallAccentOptions[number] {
-  return wallAccentOptions.find((option) => option.id === value) ?? wallAccentOptions[0];
+function getWallAccentOption(value: string | undefined): WallAccentOption {
+  const preset = wallAccentOptions.find((option) => option.id === value);
+  if (preset) return preset;
+
+  const customColor = normalizeHexColor(value);
+  if (!customColor) return wallAccentOptions[0];
+
+  return {
+    id: customColor,
+    label: "Свой",
+    accent: customColor,
+    accent2: getReadableAccentColor(customColor),
+    soft: hexToRgba(customColor, 0.17),
+  };
 }
 
-function getWallAccentCssVars(option: typeof wallAccentOptions[number]): CSSProperties {
+function getWallAccentCssVars(option: WallAccentOption): CSSProperties {
   return {
     "--accent": option.accent,
     "--accent-2": option.accent2,
@@ -5204,6 +8016,58 @@ function getWallAccentCssVars(option: typeof wallAccentOptions[number]): CSSProp
 function getWallAccentStyle(wall: Wall | undefined): CSSProperties | undefined {
   if (!wall?.accentColor) return undefined;
   return getWallAccentCssVars(getWallAccentOption(wall.accentColor));
+}
+
+function normalizeWallAccentValue(value: string | undefined): string {
+  return normalizeOptionalWallAccentValue(value) ?? wallAccentOptions[0].id;
+}
+
+function normalizeOptionalWallAccentValue(value: string | undefined): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim().toLowerCase();
+  if (wallAccentOptions.some((option) => option.id === trimmed)) return trimmed;
+  return normalizeHexColor(trimmed);
+}
+
+function normalizeHexColor(value: string | undefined): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim().toLowerCase();
+  const shortMatch = trimmed.match(/^#([0-9a-f]{3})$/i);
+  if (shortMatch) {
+    const [r, g, b] = shortMatch[1].split("");
+    return `#${r}${r}${g}${g}${b}${b}`;
+  }
+  return /^#[0-9a-f]{6}$/i.test(trimmed) ? trimmed : undefined;
+}
+
+function hexToRgb(color: string): { b: number; g: number; r: number } {
+  const normalized = normalizeHexColor(color) ?? wallAccentOptions[0].accent;
+  return {
+    r: parseInt(normalized.slice(1, 3), 16),
+    g: parseInt(normalized.slice(3, 5), 16),
+    b: parseInt(normalized.slice(5, 7), 16),
+  };
+}
+
+function mixHexColor(color: string, target: string, amount: number): string {
+  const from = hexToRgb(color);
+  const to = hexToRgb(target);
+  const mix = (a: number, b: number) => Math.round(a + (b - a) * amount);
+
+  return `#${[mix(from.r, to.r), mix(from.g, to.g), mix(from.b, to.b)]
+    .map((part) => part.toString(16).padStart(2, "0"))
+    .join("")}`;
+}
+
+function getReadableAccentColor(color: string): string {
+  const { r, g, b } = hexToRgb(color);
+  const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  return luminance > 0.58 ? mixHexColor(color, "#111318", 0.46) : mixHexColor(color, "#ffffff", 0.22);
+}
+
+function hexToRgba(color: string, alpha: number): string {
+  const { r, g, b } = hexToRgb(color);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 function getMediaFocus(value: MediaFocus | undefined): MediaFocus {
@@ -5342,11 +8206,80 @@ function getWallDisplayName(wall: Wall | undefined, userById: Map<string, UserPr
   return formatWallTextName(wall);
 }
 
+function createWallInviteCode(): string {
+  return crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+}
+
+function buildWallInviteSettings(
+  code: string,
+  ttlDays: string,
+  maxUses: string,
+  usedBy: string[] = [],
+): WallInviteSettings {
+  const normalizedCode = code.trim().replace(/[^a-z0-9_-]/gi, "").slice(0, 32) || createWallInviteCode();
+  const ttl = Number.parseInt(ttlDays, 10);
+  const limit = Number.parseInt(maxUses, 10);
+
+  return {
+    code: normalizedCode,
+    expiresAt: Number.isFinite(ttl) && ttl > 0 ? Date.now() + ttl * 24 * 60 * 60 * 1000 : undefined,
+    maxUses: Number.isFinite(limit) && limit > 0 ? limit : undefined,
+    usedBy: Array.from(new Set(usedBy.filter((id) => typeof id === "string"))).slice(0, 200),
+  };
+}
+
+function normalizeWallInviteSettings(value: WallInviteSettings | undefined): WallInviteSettings | undefined {
+  if (!value?.code) return undefined;
+  return {
+    code: value.code.trim().replace(/[^a-z0-9_-]/gi, "").slice(0, 32) || createWallInviteCode(),
+    expiresAt: Number.isFinite(Number(value.expiresAt)) && Number(value.expiresAt) > 0 ? Number(value.expiresAt) : undefined,
+    maxUses: Number.isFinite(Number(value.maxUses)) && Number(value.maxUses) > 0 ? Math.round(Number(value.maxUses)) : undefined,
+    usedBy: Array.from(new Set(Array.isArray(value.usedBy) ? value.usedBy.filter((id) => typeof id === "string") : [])).slice(0, 200),
+  };
+}
+
+function formatInviteTtlDays(expiresAt: number | undefined): string {
+  if (!expiresAt) return "30";
+  const days = Math.max(1, Math.ceil((expiresAt - Date.now()) / (24 * 60 * 60 * 1000)));
+  return String(days);
+}
+
+function getWallInvitePreview(wallId: string, code: string): string {
+  const path = routeToPath({ view: "space", spaceId: wallId }, new Map(), []);
+  return `${window.location.origin}${path}?invite=${encodeURIComponent(code.trim())}`;
+}
+
 function canManageWall(wall: Wall | undefined, userId: string): boolean {
   if (!wall) return false;
   if (wall.id.startsWith(profileWallPrefix)) return wall.id === getProfileWallId(userId);
   if (wall.id === minecraftWallId) return isMinecraftAdminUserId(userId) || wall.ownerId === userId;
   return wall.ownerId === userId;
+}
+
+function canViewWall(
+  wall: Wall,
+  userId: string | undefined,
+  followedWallIds: Set<string>,
+  inviteCode: string,
+): boolean {
+  if (wall.privacyMode !== "link" && wall.privacyMode !== "invite") return true;
+  if (userId && canManageWall(wall, userId)) return true;
+  if (followedWallIds.has(wall.id)) return true;
+  return isWallInviteActive(wall.invite, inviteCode);
+}
+
+function isWallInviteActive(invite: WallInviteSettings | undefined, code: string): boolean {
+  if (!invite || !code || invite.code !== code.trim()) return false;
+  if (invite.expiresAt && invite.expiresAt < Date.now()) return false;
+  if (invite.maxUses && invite.usedBy.length >= invite.maxUses) return false;
+  return true;
+}
+
+function canMoveSharedPost(post: Post | undefined, walls: Wall[], userId: string | undefined): boolean {
+  if (!post || !userId) return false;
+  if (post.wallId.startsWith(profileWallPrefix)) return post.wallId === getProfileWallId(userId);
+
+  return canManageWall(walls.find((wall) => wall.id === post.wallId), userId);
 }
 
 function canPublishToWall(wall: Wall | undefined, userId: string): boolean {
@@ -5412,7 +8345,7 @@ function readRouteFromPath(pathname: string, users: UserProfile[], walls: Wall[]
   const parts = pathname.split("/").filter(Boolean).map((part) => decodeURIComponent(part));
   const first = parts[0]?.toLowerCase();
 
-  if (!first || first === "main" || first === "agents") return { view: "feed" };
+  if (!first || first === "main") return { view: "feed" };
   if (first === "feed") return { view: "feed" };
   if (first === "top") return { view: "top" };
   if (first === "mine") return { view: "space", spaceId: minecraftWallId };

@@ -1,5 +1,24 @@
 import { initialState } from "./data";
-import type { Comment, Follow, NotificationItem, PixelCell, Post, Report, SocialState, Theme, UserProfile, Wall, WallActionButton } from "./types";
+import type {
+  Comment,
+  ChecklistItem,
+  Follow,
+  NotificationItem,
+  PixelCell,
+  Post,
+  PostAppearance,
+  PostConnection,
+  PostInteractionSettings,
+  PostKind,
+  PostPoll,
+  Report,
+  SketchStroke,
+  SocialState,
+  Theme,
+  UserProfile,
+  Wall,
+  WallActionButton,
+} from "./types";
 
 export const socialStateStorageKey = "kotleta.social.v6";
 const stateKey = socialStateStorageKey;
@@ -11,6 +30,11 @@ const maxPixelCells = pixelColumns * pixelRows;
 const minecraftWallId = "space:minecraft";
 const minecraftDownloadPostId = "minecraft-download-post";
 const minecraftDownloadObjectId = "minecraft:download-card";
+const postKinds = new Set<PostKind>(["note", "media", "sketch", "idea", "list", "question", "poll", "checklist", "link", "signal"]);
+const postBackgrounds = new Set<PostAppearance["background"]>(["plain", "soft", "glass", "gradient", "paper"]);
+const postShapes = new Set<PostAppearance["shape"]>(["soft", "round", "sharp", "ticket"]);
+const postSizes = new Set<PostAppearance["size"]>(["compact", "normal", "wide", "tall"]);
+const sketchPalette = new Set(["#111318", "#f6f8f7", "#21e69a", "#0f9f68", "#6c7685", "#5c6cff", "#d93862", "#f2c94c"]);
 
 export function readSocialState(): SocialState {
   const raw = localStorage.getItem(stateKey) ?? readLegacyState();
@@ -69,6 +93,9 @@ export function sanitizeSocialState(state: SocialState): SocialState {
     .filter((comment) => postIds.has(comment.postId) && userIds.has(comment.authorId))
     .map(normalizeComment);
   const commentIds = new Set(comments.map((comment) => comment.id));
+  const postConnections = normalizeArray<PostConnection>(state.postConnections)
+    .map((connection) => normalizePostConnection(connection, postIds, userIds))
+    .filter(Boolean) as PostConnection[];
   const follows = normalizeArray<Follow>(state.follows)
     .filter((follow) => follow.targetType === "user" ? userIds.has(follow.targetId) : wallIds.has(follow.targetId))
     .map((follow) => ({ ...follow, createdAt: Number(follow.createdAt) || Date.now() }));
@@ -104,6 +131,7 @@ export function sanitizeSocialState(state: SocialState): SocialState {
       ...normalizeUtilityPositions(initialState.utilityPositions),
       ...normalizeUtilityPositions(state.utilityPositions),
     },
+    postConnections,
     follows,
     savedPostIds,
     pinnedPostIds,
@@ -125,10 +153,14 @@ function readLegacyState(): string | null {
 }
 
 function normalizeUser(user: UserProfile): UserProfile {
+  const lastSeenAt = Number(user.lastSeenAt);
   return {
     ...user,
     bio: replaceDeprecatedDemoCopy(typeof user.bio === "string" ? user.bio : ""),
-    status: typeof user.status === "string" && user.status.trim() ? user.status.trim().slice(0, 40) : "Онлайн",
+    status: typeof user.status === "string" && user.status.trim() && user.status.trim() !== "Онлайн"
+      ? user.status.trim().slice(0, 40)
+      : undefined,
+    lastSeenAt: Number.isFinite(lastSeenAt) && lastSeenAt > 0 ? lastSeenAt : undefined,
   };
 }
 
@@ -190,6 +222,8 @@ function normalizeWall(wall: Wall): Wall {
       .map(normalizeWallActionButton)
       .filter(Boolean)
       .slice(0, 4) as WallActionButton[],
+    privacyMode: normalizeWallPrivacyMode(wall.privacyMode),
+    invite: normalizeWallInvite(wall.invite),
     publishMode: wall.publishMode === "owner" ? "owner" : "open",
   };
 }
@@ -214,6 +248,23 @@ function normalizeWallAccentColor(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return ["green", "yellow", "blue", "pink", "violet", "mono"].includes(trimmed) ? trimmed : undefined;
+}
+
+function normalizeWallPrivacyMode(value: unknown): Wall["privacyMode"] {
+  return value === "link" || value === "invite" ? value : "public";
+}
+
+function normalizeWallInvite(value: unknown): Wall["invite"] {
+  if (!value || typeof value !== "object") return undefined;
+  const invite = value as Wall["invite"];
+  if (!invite?.code || typeof invite.code !== "string") return undefined;
+
+  return {
+    code: invite.code.trim().replace(/[^a-z0-9_-]/gi, "").slice(0, 32) || crypto.randomUUID().replace(/-/g, "").slice(0, 12),
+    expiresAt: Number.isFinite(Number(invite.expiresAt)) && Number(invite.expiresAt) > 0 ? Number(invite.expiresAt) : undefined,
+    maxUses: Number.isFinite(Number(invite.maxUses)) && Number(invite.maxUses) > 0 ? Math.round(Number(invite.maxUses)) : undefined,
+    usedBy: Array.from(new Set(Array.isArray(invite.usedBy) ? invite.usedBy.filter((id) => typeof id === "string") : [])).slice(0, 200),
+  };
 }
 
 function normalizeMediaFocus(value: unknown): Wall["avatarFocus"] {
@@ -249,6 +300,7 @@ function normalizePost(post: Post): Post {
 
   return {
     ...post,
+    kind: normalizePostKind(post.kind),
     text: replaceDeprecatedDemoCopy(normalizePostText(post.text)),
     attachments: Array.isArray(post.attachments) ? post.attachments : [],
     reactions: Math.max(0, Number(post.reactions) || 0),
@@ -257,9 +309,139 @@ function normalizePost(post: Post): Post {
       uniqueUserIds,
     },
     position: normalizePostPosition(post.position),
+    appearance: normalizePostAppearance(post.appearance),
+    settings: normalizePostSettings(post.settings),
+    sketch: normalizeSketchStrokes(post.sketch),
+    checklist: normalizeChecklist(post.checklist),
+    poll: normalizePostPoll(post.poll),
     repostOfId: typeof post.repostOfId === "string" ? post.repostOfId : undefined,
     editedAt: post.editedAt ? Number(post.editedAt) : undefined,
     createdAt: Number(post.createdAt) || Date.now(),
+  };
+}
+
+function normalizePostKind(value: unknown): PostKind {
+  return typeof value === "string" && postKinds.has(value as PostKind) ? value as PostKind : "note";
+}
+
+function normalizePostSettings(value: unknown): PostInteractionSettings {
+  const settings = value && typeof value === "object" ? value as Partial<PostInteractionSettings> : {};
+
+  return {
+    comments: settings.comments !== false,
+    reactions: settings.reactions !== false,
+    reposts: settings.reposts !== false,
+    saves: settings.saves !== false,
+    views: settings.views !== false,
+  };
+}
+
+function normalizePostAppearance(value: unknown): PostAppearance {
+  const appearance = value && typeof value === "object" ? value as Partial<PostAppearance> : {};
+  const accentColor = typeof appearance.accentColor === "string"
+    ? normalizeWallAccentColor(appearance.accentColor)
+    : undefined;
+
+  return {
+    accentColor,
+    background: postBackgrounds.has(appearance.background as PostAppearance["background"]) ? appearance.background as PostAppearance["background"] : "plain",
+    shape: postShapes.has(appearance.shape as PostAppearance["shape"]) ? appearance.shape as PostAppearance["shape"] : "soft",
+    size: postSizes.has(appearance.size as PostAppearance["size"]) ? appearance.size as PostAppearance["size"] : "normal",
+  };
+}
+
+function normalizeSketchStrokes(value: unknown): SketchStroke[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((stroke) => {
+    if (!stroke || typeof stroke !== "object") return [];
+    const source = stroke as Partial<SketchStroke>;
+    const color = typeof source.color === "string" ? source.color.toLowerCase() : "";
+    const width = Math.max(1, Math.min(12, Math.round(Number(source.width) || 3)));
+    const points = Array.isArray(source.points)
+      ? source.points.flatMap((point) => {
+          if (!point || typeof point !== "object") return [];
+          const x = Number((point as { x?: unknown }).x);
+          const y = Number((point as { y?: unknown }).y);
+          if (!Number.isFinite(x) || !Number.isFinite(y)) return [];
+          return [{
+            x: Math.max(0, Math.min(100, Math.round(x * 10) / 10)),
+            y: Math.max(0, Math.min(100, Math.round(y * 10) / 10)),
+          }];
+        })
+      : [];
+    if (!sketchPalette.has(color) || points.length < 2) return [];
+
+    return [{
+      id: typeof source.id === "string" && source.id ? source.id : crypto.randomUUID(),
+      color,
+      width,
+      points: points.slice(0, 300),
+    }];
+  }).slice(0, 80);
+}
+
+function normalizeChecklist(value: unknown): ChecklistItem[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const source = item as Partial<ChecklistItem>;
+    const text = typeof source.text === "string" ? source.text.trim().slice(0, 120) : "";
+    if (!text) return [];
+
+    return [{
+      id: typeof source.id === "string" && source.id ? source.id : crypto.randomUUID(),
+      text,
+      checkedBy: Array.from(new Set(Array.isArray(source.checkedBy) ? source.checkedBy.filter((id) => typeof id === "string") : [])).slice(0, 500),
+    }];
+  }).slice(0, 24);
+}
+
+function normalizePostPoll(value: unknown): PostPoll | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const poll = value as Partial<PostPoll>;
+  const options = Array.isArray(poll.options)
+    ? poll.options.flatMap((option) => {
+        if (!option || typeof option !== "object") return [];
+        const text = typeof option.text === "string" ? option.text.trim().slice(0, 90) : "";
+        if (!text) return [];
+
+        return [{
+          id: typeof option.id === "string" && option.id ? option.id : crypto.randomUUID(),
+          text,
+          voterIds: Array.from(new Set(Array.isArray(option.voterIds) ? option.voterIds.filter((id) => typeof id === "string") : [])).slice(0, 500),
+        }];
+      })
+    : [];
+
+  if (options.length < 2) return undefined;
+
+  return {
+    question: typeof poll.question === "string" && poll.question.trim() ? poll.question.trim().slice(0, 160) : "Голосование",
+    multi: poll.multi === true,
+    options: options.slice(0, 8),
+  };
+}
+
+function normalizePostConnection(
+  connection: PostConnection,
+  postIds: Set<string>,
+  userIds: Set<string>,
+): PostConnection | null {
+  const fromPostId = typeof connection.fromPostId === "string" ? connection.fromPostId : "";
+  const toPostId = typeof connection.toPostId === "string" ? connection.toPostId : "";
+  if (!postIds.has(fromPostId) || !postIds.has(toPostId) || fromPostId === toPostId) return null;
+
+  return {
+    id: typeof connection.id === "string" && connection.id ? connection.id : crypto.randomUUID(),
+    fromPostId,
+    toPostId,
+    authorId: userIds.has(connection.authorId) ? connection.authorId : "guest",
+    label: typeof connection.label === "string" && connection.label.trim()
+      ? connection.label.trim().slice(0, 28)
+      : undefined,
+    createdAt: Number(connection.createdAt) || Date.now(),
   };
 }
 

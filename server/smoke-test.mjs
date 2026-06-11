@@ -76,7 +76,20 @@ try {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ state: snapshot.state, version: snapshot.version }),
   });
-  assert(staleWrite.status === 409, "stale shared state PUT should return 409");
+  assert(staleWrite.ok, "stale shared state PUT should return the current snapshot");
+  const stalePayload = await staleWrite.json();
+  assert(stalePayload.conflict === true, "stale shared state PUT should be marked as conflict");
+
+  const destructiveState = structuredClone(updated.state);
+  destructiveState.users = destructiveState.users.slice(0, 1);
+  const rejectedRegression = await fetchJson(`http://127.0.0.1:${port}/api/social-state`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ state: destructiveState, version: updated.version }),
+  });
+  assert(rejectedRegression.conflict === true, "destructive state write should be marked as conflict");
+  assert(rejectedRegression.rejected?.reason === "users-regression", "destructive state write should explain rejection");
+  assert(rejectedRegression.state.users.length === updated.state.users.length, "destructive state write should not persist");
 
   const rootHtml = await fetchText(`http://127.0.0.1:${port}/`);
   assert(rootHtml.includes("<!doctype html>"), "root HTML did not serve dist");

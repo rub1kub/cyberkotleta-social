@@ -1,9 +1,11 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { copyFile, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { createDefaultState } from "./default-state.mjs";
 
 const maxRequestBodyBytes = 6 * 1024 * 1024;
 const defaultDataDir = ".data";
+const maxStateBackups = 60;
 const pixelColumns = 300;
 const pixelRows = 190;
 const maxPixelCells = pixelColumns * pixelRows;
@@ -11,6 +13,12 @@ const pixelPalette = new Set(["#111318", "#f6f8f7", "#21e69a", "#0f9f68", "#6c76
 const minecraftWallId = "space:minecraft";
 const minecraftDownloadPostId = "minecraft-download-post";
 const minecraftDownloadObjectId = "minecraft:download-card";
+const postKinds = new Set(["note", "media", "sketch", "idea", "list", "question", "poll", "checklist", "link", "signal"]);
+const postBackgrounds = new Set(["plain", "soft", "glass", "gradient", "paper"]);
+const postShapes = new Set(["soft", "round", "sharp", "ticket"]);
+const postSizes = new Set(["compact", "normal", "wide", "tall"]);
+const wallAccentColors = new Set(["green", "yellow", "blue", "pink", "violet", "mono"]);
+const sketchPalette = new Set(["#111318", "#f6f8f7", "#21e69a", "#0f9f68", "#6c7685", "#5c6cff", "#d93862", "#f2c94c"]);
 
 export function createSharedStateStore({ dataDir = process.env.KOTLETA_DATA_DIR ?? defaultDataDir } = {}) {
   const stateFile = resolve(dataDir, "social-state.json");
@@ -42,8 +50,9 @@ export function createSharedStateStore({ dataDir = process.env.KOTLETA_DATA_DIR 
       state: sanitizeSocialState(state),
       version,
     };
-    const tempFile = `${stateFile}.${process.pid}.${Date.now()}.tmp`;
+    const tempFile = `${stateFile}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
     await mkdir(dirname(stateFile), { recursive: true });
+    await backupCurrentState(stateFile);
     await writeFile(tempFile, JSON.stringify(payload, null, 2), "utf8");
     await rename(tempFile, stateFile);
     return payload;
@@ -73,12 +82,19 @@ export function createSocialStateHandler(store = createSharedStateStore()) {
         }
 
         const current = await store.read();
-        if (Number.isFinite(payload.version) && payload.version !== current.version) {
-          sendJson(response, { ...current, conflict: true }, 409);
+        const incomingState = sanitizeSocialState(payload.state);
+        const regression = getDangerousStateRegression(incomingState, current.state);
+        if (regression) {
+          sendJson(response, { ...current, conflict: true, rejected: regression });
           return;
         }
 
-        sendJson(response, await store.write(payload.state));
+        if (Number.isFinite(payload.version) && payload.version !== current.version) {
+          sendJson(response, { ...current, conflict: true });
+          return;
+        }
+
+        sendJson(response, await store.write(incomingState));
         return;
       }
 
@@ -93,6 +109,57 @@ export function createSocialStateHandler(store = createSharedStateStore()) {
       console.error(error);
       sendText(response, 500, "Shared state error");
     }
+  };
+}
+
+async function backupCurrentState(stateFile) {
+  try {
+    const info = await stat(stateFile);
+    if (!info.isFile() || info.size === 0) return;
+
+    const backupDir = join(dirname(stateFile), "backups");
+    await mkdir(backupDir, { recursive: true });
+    await copyFile(stateFile, join(backupDir, `social-state.${Date.now()}.json`));
+    await pruneStateBackups(backupDir);
+  } catch {
+    // Missing state file on first boot is expected.
+  }
+}
+
+async function pruneStateBackups(backupDir) {
+  try {
+    const entries = await readdir(backupDir, { withFileTypes: true });
+    const backups = entries
+      .filter((entry) => entry.isFile() && /^social-state\.\d+\.json$/.test(entry.name))
+      .map((entry) => entry.name)
+      .sort();
+    const staleBackups = backups.slice(0, Math.max(0, backups.length - maxStateBackups));
+
+    await Promise.all(staleBackups.map((name) => unlink(join(backupDir, name)).catch(() => undefined)));
+  } catch {
+    // Backups are safety net only; they must not block the main write.
+  }
+}
+
+function getDangerousStateRegression(nextState, currentState) {
+  const nextCounts = getStateCounts(nextState);
+  const currentCounts = getStateCounts(currentState);
+  const postDrop = currentCounts.posts - nextCounts.posts;
+  const userDrop = currentCounts.users - nextCounts.users;
+  const wallDrop = currentCounts.walls - nextCounts.walls;
+
+  if (postDrop >= 3) return { reason: "posts-regression", current: currentCounts, next: nextCounts };
+  if (userDrop >= 3) return { reason: "users-regression", current: currentCounts, next: nextCounts };
+  if (wallDrop >= 2) return { reason: "walls-regression", current: currentCounts, next: nextCounts };
+  return null;
+}
+
+function getStateCounts(state) {
+  return {
+    comments: Array.isArray(state?.comments) ? state.comments.length : 0,
+    posts: Array.isArray(state?.posts) ? state.posts.length : 0,
+    users: Array.isArray(state?.users) ? state.users.length : 0,
+    walls: Array.isArray(state?.walls) ? state.walls.length : 0,
   };
 }
 
@@ -149,6 +216,7 @@ function sanitizeSocialState(state) {
   const postIds = new Set(posts.map((post) => post.id));
   const comments = normalizeComments(state?.comments, fallback.comments, postIds, userIds);
   const pixelCells = normalizePixelCells(state?.pixelCells, userIds);
+  const postConnections = normalizePostConnections(state?.postConnections, postIds, userIds);
 
   return {
     siteSections: fallback.siteSections,
@@ -157,6 +225,7 @@ function sanitizeSocialState(state) {
     walls,
     posts,
     comments,
+    postConnections,
     utilityPositions: {
       ...normalizeUtilityPositions(fallback.utilityPositions),
       ...normalizeUtilityPositions(state?.utilityPositions),
@@ -182,11 +251,16 @@ function normalizeUsers(value, fallback) {
       name: user.name,
       handle: typeof user.handle === "string" ? user.handle : `@${user.id}`,
       bio: typeof user.bio === "string" ? user.bio : "",
-      status: typeof user.status === "string" && user.status.trim() ? user.status.trim().slice(0, 40) : "Онлайн",
+      status: typeof user.status === "string" && user.status.trim() && user.status.trim() !== "Онлайн"
+        ? user.status.trim().slice(0, 40)
+        : undefined,
       joinedAt: Number(user.joinedAt) || Date.now(),
+      lastSeenAt: Number.isFinite(Number(user.lastSeenAt)) && Number(user.lastSeenAt) > 0
+        ? Number(user.lastSeenAt)
+        : undefined,
       timeOnSiteMinutes: Math.max(0, Number(user.timeOnSiteMinutes) || 0),
       avatarUrl: typeof user.avatarUrl === "string" ? user.avatarUrl : undefined,
-      provider: user.provider === "discord" ? "discord" : undefined,
+      provider: user.provider === "discord" || user.provider === "local" ? user.provider : undefined,
       discordId: typeof user.discordId === "string" ? user.discordId : undefined,
     }));
 }
@@ -240,9 +314,9 @@ function normalizeWalls(value, fallback, userIds) {
     .map((wall) => ({
       ...wall,
       ownerId: typeof wall.ownerId === "string" && userIds.has(wall.ownerId) ? wall.ownerId : undefined,
-      name: typeof wall.name === "string" && wall.name.trim() ? wall.name.trim() : wall.id,
-      description: typeof wall.description === "string" ? wall.description : "",
-      rules: typeof wall.rules === "string" ? wall.rules : "",
+      name: normalizeUserText(wall.name, wall.id),
+      description: normalizeUserText(wall.description, ""),
+      rules: normalizeUserText(wall.rules, ""),
       avatarUrl: normalizeOptionalUrl(wall.avatarUrl),
       bannerUrl: normalizeOptionalUrl(wall.bannerUrl),
       coverUrl: normalizeOptionalUrl(wall.coverUrl),
@@ -250,8 +324,16 @@ function normalizeWalls(value, fallback, userIds) {
       bannerFocus: normalizeMediaFocus(wall.bannerFocus),
       accentColor: normalizeWallAccentColor(wall.accentColor),
       actionButtons: normalizeWallActionButtons(wall.actionButtons),
+      privacyMode: normalizeWallPrivacyMode(wall.privacyMode),
+      invite: normalizeWallInvite(wall.invite),
       publishMode: wall.publishMode === "owner" ? "owner" : "open",
     }));
+}
+
+function normalizeUserText(value, fallback) {
+  if (typeof value !== "string") return fallback;
+  const trimmed = value.replace(/\uFFFD+/g, "").trim();
+  return trimmed || fallback;
 }
 
 function ensureRequiredWalls(walls, fallback) {
@@ -272,8 +354,35 @@ function normalizeOptionalUrl(value) {
 
 function normalizeWallAccentColor(value) {
   if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  return ["green", "yellow", "blue", "pink", "violet", "mono"].includes(trimmed) ? trimmed : undefined;
+  const trimmed = value.trim().toLowerCase();
+  if (wallAccentColors.has(trimmed)) return trimmed;
+  return normalizeHexColor(trimmed);
+}
+
+function normalizeHexColor(value) {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim().toLowerCase();
+  const shortMatch = trimmed.match(/^#([0-9a-f]{3})$/i);
+  if (shortMatch) {
+    const [r, g, b] = shortMatch[1].split("");
+    return `#${r}${r}${g}${g}${b}${b}`;
+  }
+  return /^#[0-9a-f]{6}$/i.test(trimmed) ? trimmed : undefined;
+}
+
+function normalizeWallPrivacyMode(value) {
+  return value === "link" || value === "invite" ? value : "public";
+}
+
+function normalizeWallInvite(value) {
+  if (!value || typeof value !== "object" || typeof value.code !== "string") return undefined;
+
+  return {
+    code: value.code.trim().replace(/[^a-z0-9_-]/gi, "").slice(0, 32) || randomUUID().replace(/-/g, "").slice(0, 12),
+    expiresAt: Number.isFinite(Number(value.expiresAt)) && Number(value.expiresAt) > 0 ? Number(value.expiresAt) : undefined,
+    maxUses: Number.isFinite(Number(value.maxUses)) && Number(value.maxUses) > 0 ? Math.round(Number(value.maxUses)) : undefined,
+    usedBy: Array.from(new Set(Array.isArray(value.usedBy) ? value.usedBy.filter((id) => typeof id === "string") : [])).slice(0, 200),
+  };
 }
 
 function normalizeMediaFocus(value) {
@@ -315,15 +424,145 @@ function normalizePosts(value, fallback, wallIds, userIds) {
       id: post.id,
       wallId: post.wallId,
       authorId: post.authorId,
+      kind: postKinds.has(post.kind) ? post.kind : "note",
       text: typeof post.text === "string" ? post.text : "",
       attachments: Array.isArray(post.attachments) ? post.attachments : [],
       reactions: Math.max(0, Number(post.reactions) || 0),
       views: normalizeViews(post.views, userIds),
       position: normalizePosition(post.position),
+      appearance: normalizePostAppearance(post.appearance),
+      settings: normalizePostSettings(post.settings),
+      sketch: normalizeSketchStrokes(post.sketch),
+      checklist: normalizeChecklist(post.checklist),
+      poll: normalizePostPoll(post.poll),
       repostOfId: typeof post.repostOfId === "string" ? post.repostOfId : undefined,
       editedAt: post.editedAt ? Number(post.editedAt) : undefined,
       createdAt: Number(post.createdAt) || Date.now(),
     }));
+}
+
+function normalizePostSettings(value) {
+  const settings = value && typeof value === "object" ? value : {};
+
+  return {
+    comments: settings.comments !== false,
+    reactions: settings.reactions !== false,
+    reposts: settings.reposts !== false,
+    saves: settings.saves !== false,
+    views: settings.views !== false,
+  };
+}
+
+function normalizePostAppearance(value) {
+  const appearance = value && typeof value === "object" ? value : {};
+
+  return {
+    accentColor: normalizeWallAccentColor(appearance.accentColor),
+    background: postBackgrounds.has(appearance.background) ? appearance.background : "plain",
+    shape: postShapes.has(appearance.shape) ? appearance.shape : "soft",
+    size: postSizes.has(appearance.size) ? appearance.size : "normal",
+  };
+}
+
+function normalizeSketchStrokes(value) {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((stroke) => {
+    if (!stroke || typeof stroke !== "object") return [];
+    const color = typeof stroke.color === "string" ? stroke.color.toLowerCase() : "";
+    const width = Math.max(1, Math.min(12, Math.round(Number(stroke.width) || 3)));
+    const points = Array.isArray(stroke.points)
+      ? stroke.points.flatMap((point) => {
+          if (!point || typeof point !== "object") return [];
+          const x = Number(point.x);
+          const y = Number(point.y);
+          if (!Number.isFinite(x) || !Number.isFinite(y)) return [];
+          return [{
+            x: Math.max(0, Math.min(100, Math.round(x * 10) / 10)),
+            y: Math.max(0, Math.min(100, Math.round(y * 10) / 10)),
+          }];
+        })
+      : [];
+    if (!sketchPalette.has(color) || points.length < 2) return [];
+
+    return [{
+      id: typeof stroke.id === "string" && stroke.id ? stroke.id : randomUUID(),
+      color,
+      width,
+      points: points.slice(0, 300),
+    }];
+  }).slice(0, 80);
+}
+
+function normalizeChecklist(value) {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const text = typeof item.text === "string" ? item.text.trim().slice(0, 120) : "";
+    if (!text) return [];
+
+    return [{
+      id: typeof item.id === "string" && item.id ? item.id : randomUUID(),
+      text,
+      checkedBy: Array.from(new Set(Array.isArray(item.checkedBy) ? item.checkedBy.filter((id) => typeof id === "string") : [])).slice(0, 500),
+    }];
+  }).slice(0, 24);
+}
+
+function normalizePostPoll(value) {
+  if (!value || typeof value !== "object") return undefined;
+  const options = Array.isArray(value.options)
+    ? value.options.flatMap((option) => {
+        if (!option || typeof option !== "object") return [];
+        const text = typeof option.text === "string" ? option.text.trim().slice(0, 90) : "";
+        if (!text) return [];
+
+        return [{
+          id: typeof option.id === "string" && option.id ? option.id : randomUUID(),
+          text,
+          voterIds: Array.from(new Set(Array.isArray(option.voterIds) ? option.voterIds.filter((id) => typeof id === "string") : [])).slice(0, 500),
+        }];
+      })
+    : [];
+
+  if (options.length < 2) return undefined;
+
+  return {
+    question: typeof value.question === "string" && value.question.trim()
+      ? value.question.trim().slice(0, 160)
+      : "Голосование",
+    multi: value.multi === true,
+    options: options.slice(0, 8),
+  };
+}
+
+function normalizePostConnections(value, postIds, userIds) {
+  if (!Array.isArray(value)) return [];
+
+  const seen = new Set();
+
+  return value.flatMap((connection) => {
+    if (!connection || typeof connection !== "object") return [];
+    const fromPostId = typeof connection.fromPostId === "string" ? connection.fromPostId : "";
+    const toPostId = typeof connection.toPostId === "string" ? connection.toPostId : "";
+    if (!postIds.has(fromPostId) || !postIds.has(toPostId) || fromPostId === toPostId) return [];
+
+    const key = `${fromPostId}:${toPostId}`;
+    if (seen.has(key)) return [];
+    seen.add(key);
+
+    return [{
+      id: typeof connection.id === "string" && connection.id ? connection.id : randomUUID(),
+      fromPostId,
+      toPostId,
+      authorId: userIds.has(connection.authorId) ? connection.authorId : "guest",
+      label: typeof connection.label === "string" && connection.label.trim()
+        ? connection.label.trim().slice(0, 28)
+        : undefined,
+      createdAt: Number(connection.createdAt) || Date.now(),
+    }];
+  }).slice(0, 500);
 }
 
 function normalizeComments(value, fallback, postIds, userIds) {
