@@ -113,13 +113,21 @@ export function createSocialStateEventsHandler(store = createSharedStateStore())
 
     function sendSnapshot(payload) {
       if (closed || response.destroyed) return;
-      response.write(`event: social-state\nid: ${payload.version}\ndata: ${JSON.stringify(payload)}\n\n`);
+      try {
+        response.write(`retry: 2000\nevent: social-state\nid: ${payload.version}\ndata: ${JSON.stringify(payload)}\n\n`);
+      } catch {
+        closed = true;
+      }
     }
 
     const unsubscribe = store.subscribe(sendSnapshot);
     const heartbeat = setInterval(() => {
       if (!closed && !response.destroyed) {
-        response.write(": keepalive\n\n");
+        try {
+          response.write(": keepalive\n\n");
+        } catch {
+          closed = true;
+        }
       }
     }, 25000);
 

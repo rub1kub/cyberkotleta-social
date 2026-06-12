@@ -19,6 +19,7 @@ import type {
 const sharedStatePath = "/api/social-state";
 const sharedStateEventsPath = "/api/social-state/events";
 const sharedStateActionsPath = "/api/social-state/actions";
+const sseErrorSnapshotCooldownMs = 5000;
 
 export type SharedStateSnapshot = {
   conflict?: boolean;
@@ -264,6 +265,8 @@ export function subscribeSharedSocialState(
   if (typeof EventSource === "undefined") return () => undefined;
 
   const source = new EventSource(sharedStateEventsPath);
+  let lastErrorSnapshotAt = 0;
+
   source.addEventListener("social-state", (event) => {
     try {
       const payload = JSON.parse((event as MessageEvent<string>).data) as SharedStateSnapshot;
@@ -276,6 +279,15 @@ export function subscribeSharedSocialState(
     } catch {
       // Broken SSE payload should not break the app.
     }
+  });
+  source.addEventListener("error", () => {
+    const now = Date.now();
+    if (now - lastErrorSnapshotAt < sseErrorSnapshotCooldownMs) return;
+    lastErrorSnapshotAt = now;
+
+    void readSharedSocialState().then((snapshot) => {
+      if (snapshot) onSnapshot(snapshot);
+    });
   });
 
   return () => source.close();
