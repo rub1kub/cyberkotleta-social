@@ -4122,28 +4122,31 @@ body {
 
 .composer-resize-handle {
   position: absolute;
-  right: 9px;
-  bottom: 9px;
+  right: 64px;
+  bottom: 25px;
   z-index: 4;
   display: grid;
-  width: 24px;
-  height: 24px;
+  width: 30px;
+  height: 30px;
   place-items: center;
   border: 1px solid color-mix(in srgb, var(--post-accent, var(--accent)) 34%, var(--line));
   border-radius: 999px;
-  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
   color: var(--post-accent-2, var(--accent-2));
   cursor: nwse-resize;
   padding: 0;
   backdrop-filter: blur(14px);
+  opacity: 0.72;
+  transition:
+    background 0.16s ease,
+    opacity 0.16s ease,
+    transform 0.16s ease;
 }
 
-.composer-resize-handle::before {
-  width: 9px;
-  height: 9px;
-  border-right: 2px solid currentColor;
-  border-bottom: 2px solid currentColor;
-  content: "";
+.composer-resize-handle:hover {
+  background: color-mix(in srgb, var(--post-accent-soft, var(--accent-soft)) 72%, var(--surface));
+  opacity: 1;
+  transform: translateY(-1px);
 }
 
 .draft-appearance-preview {

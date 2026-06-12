@@ -3620,7 +3620,9 @@ function Composer({
           onPointerDown={handleResizePointerDown}
           aria-label="Изменить размер заметки"
           title="Тяни, чтобы изменить размер заметки"
-        />
+        >
+          <Maximize2 size={13} strokeWidth={2.4} />
+        </button>
       ) : null}
     </section>
   );

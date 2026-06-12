@@ -49,6 +49,14 @@ export function createSharedStateStore({ dataDir = process.env.KOTLETA_DATA_DIR 
     return payload;
   }
 
+  async function applyAction(action) {
+    const db = await ensureDatabase();
+    const payload = applyDirectSocialStateAction(db, action);
+    if (!payload) return null;
+    notify(payload);
+    return payload;
+  }
+
   async function ensureDatabase() {
     if (database) return database;
 
@@ -77,6 +85,7 @@ export function createSharedStateStore({ dataDir = process.env.KOTLETA_DATA_DIR 
   }
 
   return {
+    applyAction,
     dbFile,
     read,
     stateFile,
@@ -135,6 +144,12 @@ export function createSocialStateActionHandler(store = createSharedStateStore())
 
       const body = await readRequestBody(request, maxRequestBodyBytes);
       const action = JSON.parse(body || "{}");
+      const directPayload = typeof store.applyAction === "function" ? await store.applyAction(action) : null;
+      if (directPayload) {
+        sendJson(response, directPayload);
+        return;
+      }
+
       const current = await store.read();
       const nextState = applySocialStateAction(current.state, action);
       sendJson(response, await store.write(nextState));
@@ -1317,6 +1332,351 @@ function writeStatePayloadToDatabase(db, payload) {
     state,
     version,
   };
+}
+
+const directActionTypes = new Set([
+  "post.create",
+  "post.move",
+  "post.react",
+  "post.repost",
+  "post.update",
+  "post.view",
+  "post.save.toggle",
+  "comment.create",
+  "comment.react",
+  "comment.update",
+  "checklist.toggle",
+  "connection.create",
+  "connection.delete",
+  "poll.vote",
+  "follow.toggle",
+  "wall.create",
+  "wall.update",
+  "pixel.paint",
+]);
+
+function applyDirectSocialStateAction(db, action) {
+  if (!directActionTypes.has(action?.type)) return null;
+
+  const current = readStatePayloadFromDatabase(db);
+  const nextState = applySocialStateAction(current.state, action);
+  const version = Date.now();
+  const actorId = normalizeActionId(action.actorId);
+  const currentCommentIds = new Set(current.state.comments.map((comment) => comment.id));
+  const currentConnectionIds = new Set(current.state.postConnections.map((connection) => connection.id));
+  const currentNotificationIds = new Set(current.state.notifications.map((notification) => notification.id));
+  const currentPostIds = new Set(current.state.posts.map((post) => post.id));
+  const currentWallIds = new Set(current.state.walls.map((wall) => wall.id));
+
+  runTransaction(db, () => {
+    setMetaValue(db, "version", String(version));
+    upsertActorUserRow(db, nextState, actorId);
+
+    switch (action.type) {
+      case "post.create":
+      case "post.repost":
+        insertNewWallRows(db, nextState, currentWallIds);
+        insertNewPostRows(db, nextState, currentPostIds);
+        break;
+      case "post.move":
+      case "post.react":
+      case "post.view":
+      case "post.update":
+      case "checklist.toggle":
+      case "poll.vote":
+        upsertChangedPostRow(db, nextState, normalizeActionId(action.postId));
+        break;
+      case "post.save.toggle":
+        upsertChangedPostRow(db, nextState, normalizeActionId(action.postId));
+        upsertScopedListRow(db, "savedPostIdsByUser", actorId, nextState.savedPostIdsByUser?.[actorId] ?? []);
+        setMetaJson(db, "savedPostIds", nextState.savedPostIds);
+        break;
+      case "comment.react":
+        upsertChangedCommentRow(db, nextState, normalizeActionId(action.commentId));
+        break;
+      case "comment.create":
+        insertNewCommentRows(db, nextState, currentCommentIds);
+        break;
+      case "comment.update":
+        upsertChangedCommentRow(db, nextState, normalizeActionId(action.commentId));
+        break;
+      case "connection.create":
+        insertNewConnectionRows(db, nextState, currentConnectionIds);
+        break;
+      case "connection.delete":
+        deleteConnectionRow(db, normalizeActionId(action.connectionId));
+        break;
+      case "follow.toggle":
+        syncFollowRowForAction(db, nextState, actorId, action);
+        break;
+      case "wall.create":
+        insertNewWallRows(db, nextState, currentWallIds);
+        break;
+      case "wall.update":
+        upsertChangedWallRow(db, nextState, normalizeActionId(action.wallId));
+        break;
+      case "pixel.paint":
+        syncPixelPaintRows(db, nextState, actorId, action);
+        break;
+      default:
+        break;
+    }
+
+    insertNewNotificationRows(db, nextState, currentNotificationIds);
+  });
+
+  return {
+    state: nextState,
+    version,
+  };
+}
+
+function insertNewWallRows(db, state, currentWallIds) {
+  const newWalls = state.walls.filter((wall) => !currentWallIds.has(wall.id));
+  if (newWalls.length === 0) return;
+  let sortOrder = getFrontSortOrder(db, "walls") - newWalls.length + 1;
+  for (const wall of newWalls) {
+    upsertWallRow(db, wall, sortOrder);
+    sortOrder += 1;
+  }
+}
+
+function upsertChangedWallRow(db, state, wallId) {
+  if (!wallId) return;
+  const wall = state.walls.find((item) => item.id === wallId);
+  if (!wall) return;
+  const existing = db.prepare("SELECT sort_order FROM walls WHERE id = ?").get(wall.id);
+  upsertWallRow(db, wall, Number.isFinite(Number(existing?.sort_order)) ? Number(existing.sort_order) : getBackSortOrder(db, "walls"));
+}
+
+function upsertWallRow(db, wall, sortOrder) {
+  upsertJsonRow(db, {
+    tableName: "walls",
+    idColumn: "id",
+    id: wall.id,
+    item: wall,
+    columns: {
+      owner_id: wall.ownerId ?? null,
+      site_section_id: wall.siteSectionId,
+    },
+    fallbackSortOrder: sortOrder,
+  });
+}
+
+function upsertActorUserRow(db, state, actorId) {
+  const user = state.users.find((item) => item.id === actorId);
+  if (!user) return;
+  upsertJsonRow(db, {
+    tableName: "users",
+    idColumn: "id",
+    id: user.id,
+    item: user,
+    columns: {},
+    fallbackSortOrder: getFrontSortOrder(db, "users"),
+  });
+}
+
+function insertNewPostRows(db, state, currentPostIds) {
+  const newPosts = state.posts.filter((post) => !currentPostIds.has(post.id));
+  if (newPosts.length === 0) return;
+  let sortOrder = getFrontSortOrder(db, "posts") - newPosts.length + 1;
+  for (const post of newPosts) {
+    upsertPostRow(db, post, sortOrder);
+    sortOrder += 1;
+  }
+}
+
+function upsertChangedPostRow(db, state, postId) {
+  if (!postId) return;
+  const post = state.posts.find((item) => item.id === postId);
+  if (!post) return;
+  const existing = db.prepare("SELECT sort_order FROM posts WHERE id = ?").get(post.id);
+  upsertPostRow(db, post, Number.isFinite(Number(existing?.sort_order)) ? Number(existing.sort_order) : getBackSortOrder(db, "posts"));
+}
+
+function upsertPostRow(db, post, sortOrder) {
+  upsertJsonRow(db, {
+    tableName: "posts",
+    idColumn: "id",
+    id: post.id,
+    item: post,
+    columns: {
+      wall_id: post.wallId,
+      author_id: post.authorId,
+      created_at: Number(post.createdAt) || 0,
+    },
+    fallbackSortOrder: sortOrder,
+  });
+}
+
+function insertNewCommentRows(db, state, currentCommentIds) {
+  const newComments = state.comments.filter((comment) => !currentCommentIds.has(comment.id));
+  if (newComments.length === 0) return;
+  let sortOrder = getBackSortOrder(db, "comments");
+  for (const comment of newComments) {
+    upsertCommentRow(db, comment, sortOrder);
+    sortOrder += 1;
+  }
+}
+
+function upsertChangedCommentRow(db, state, commentId) {
+  if (!commentId) return;
+  const comment = state.comments.find((item) => item.id === commentId);
+  if (!comment) return;
+  const existing = db.prepare("SELECT sort_order FROM comments WHERE id = ?").get(comment.id);
+  upsertCommentRow(db, comment, Number.isFinite(Number(existing?.sort_order)) ? Number(existing.sort_order) : getBackSortOrder(db, "comments"));
+}
+
+function upsertCommentRow(db, comment, sortOrder) {
+  upsertJsonRow(db, {
+    tableName: "comments",
+    idColumn: "id",
+    id: comment.id,
+    item: comment,
+    columns: {
+      post_id: comment.postId,
+      author_id: comment.authorId,
+      created_at: Number(comment.createdAt) || 0,
+    },
+    fallbackSortOrder: sortOrder,
+  });
+}
+
+function insertNewConnectionRows(db, state, currentConnectionIds) {
+  const newConnections = state.postConnections.filter((connection) => !currentConnectionIds.has(connection.id));
+  if (newConnections.length === 0) return;
+  let sortOrder = getFrontSortOrder(db, "post_connections") - newConnections.length + 1;
+  for (const connection of newConnections) {
+    upsertJsonRow(db, {
+      tableName: "post_connections",
+      idColumn: "id",
+      id: connection.id,
+      item: connection,
+      columns: {
+        from_post_id: connection.fromPostId,
+        to_post_id: connection.toPostId,
+        author_id: connection.authorId,
+        created_at: Number(connection.createdAt) || 0,
+      },
+      fallbackSortOrder: sortOrder,
+    });
+    sortOrder += 1;
+  }
+}
+
+function deleteConnectionRow(db, connectionId) {
+  if (!connectionId) return;
+  db.prepare("DELETE FROM post_connections WHERE id = ?").run(connectionId);
+}
+
+function syncFollowRowForAction(db, state, actorId, action) {
+  const targetType = action.targetType === "wall" ? "wall" : "user";
+  const targetId = normalizeActionId(action.targetId);
+  if (!targetId) return;
+
+  db.prepare("DELETE FROM follows WHERE user_id = ? AND target_type = ? AND target_id = ?").run(actorId, targetType, targetId);
+  const follow = state.follows.find((item) => item.userId === actorId && item.targetType === targetType && item.targetId === targetId);
+  if (!follow) return;
+
+  upsertJsonRow(db, {
+    tableName: "follows",
+    idColumn: "id",
+    id: follow.id,
+    item: follow,
+    columns: {
+      user_id: follow.userId,
+      target_id: follow.targetId,
+      target_type: follow.targetType,
+      created_at: Number(follow.createdAt) || 0,
+    },
+    fallbackSortOrder: getFrontSortOrder(db, "follows"),
+  });
+}
+
+function syncPixelPaintRows(db, state, actorId, action) {
+  const x = Math.round(Number(action.x));
+  const y = Math.round(Number(action.y));
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+
+  const clampedX = Math.max(0, Math.min(pixelColumns - 1, x));
+  const clampedY = Math.max(0, Math.min(pixelRows - 1, y));
+  const cell = state.pixelCells.find((item) => item.x === clampedX && item.y === clampedY);
+  if (cell) {
+    upsertJsonRow(db, {
+      tableName: "pixel_cells",
+      idColumn: "cell_key",
+      id: `${cell.x}:${cell.y}`,
+      item: cell,
+      columns: {
+        x: cell.x,
+        y: cell.y,
+        updated_at: Number(cell.updatedAt) || 0,
+      },
+      fallbackSortOrder: getBackSortOrder(db, "pixel_cells"),
+    });
+  }
+
+  const cooldown = Number(state.pixelCooldowns?.[actorId]) || 0;
+  if (cooldown > 0) {
+    db.prepare("INSERT INTO pixel_cooldowns (user_id, timestamp) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET timestamp = excluded.timestamp")
+      .run(actorId, cooldown);
+  }
+}
+
+function upsertScopedListRow(db, kind, userId, ids) {
+  const normalizedIds = Array.isArray(ids) ? ids.filter((id) => typeof id === "string") : [];
+  if (normalizedIds.length === 0) {
+    db.prepare("DELETE FROM user_scoped_lists WHERE kind = ? AND user_id = ?").run(kind, userId);
+    return;
+  }
+
+  db.prepare("INSERT INTO user_scoped_lists (kind, user_id, ids) VALUES (?, ?, ?) ON CONFLICT(kind, user_id) DO UPDATE SET ids = excluded.ids")
+    .run(kind, userId, JSON.stringify(normalizedIds));
+}
+
+function insertNewNotificationRows(db, state, currentNotificationIds) {
+  const notifications = state.notifications.filter((notification) => !currentNotificationIds.has(notification.id));
+  if (notifications.length === 0) return;
+
+  const frontSortOrder = getFrontSortOrder(db, "notifications");
+  notifications.forEach((notification, index) => {
+    upsertJsonRow(db, {
+      tableName: "notifications",
+      idColumn: "id",
+      id: notification.id,
+      item: notification,
+      columns: {
+        recipient_id: notification.recipientId,
+        actor_id: notification.actorId,
+        created_at: Number(notification.createdAt) || 0,
+      },
+      fallbackSortOrder: frontSortOrder - notifications.length + index + 1,
+    });
+  });
+}
+
+function upsertJsonRow(db, { tableName, idColumn, id, item, columns, fallbackSortOrder }) {
+  const existing = db.prepare(`SELECT sort_order FROM ${tableName} WHERE ${idColumn} = ?`).get(id);
+  const sortOrder = Number.isFinite(Number(existing?.sort_order)) ? Number(existing.sort_order) : fallbackSortOrder;
+  const columnNames = Object.keys(columns);
+  const updateColumns = ["sort_order = excluded.sort_order", "data = excluded.data", ...columnNames.map((name) => `${name} = excluded.${name}`)];
+  const placeholders = ["?", "?", "?", ...columnNames.map(() => "?")].join(", ");
+
+  db.prepare(
+    `INSERT INTO ${tableName} (${idColumn}, sort_order, data${columnNames.length ? `, ${columnNames.join(", ")}` : ""})
+     VALUES (${placeholders})
+     ON CONFLICT(${idColumn}) DO UPDATE SET ${updateColumns.join(", ")}`,
+  ).run(id, sortOrder, JSON.stringify(item), ...Object.values(columns));
+}
+
+function getFrontSortOrder(db, tableName) {
+  const row = db.prepare(`SELECT MIN(sort_order) AS sort_order FROM ${tableName}`).get();
+  return Number.isFinite(Number(row?.sort_order)) ? Number(row.sort_order) - 1 : 0;
+}
+
+function getBackSortOrder(db, tableName) {
+  const row = db.prepare(`SELECT MAX(sort_order) AS sort_order FROM ${tableName}`).get();
+  return Number.isFinite(Number(row?.sort_order)) ? Number(row.sort_order) + 1 : 0;
 }
 
 function runTransaction(db, callback) {
