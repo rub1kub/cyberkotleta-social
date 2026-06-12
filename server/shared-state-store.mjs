@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync } from "node:fs";
 import { copyFile, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { createDefaultState } from "./default-state.mjs";
 
 const maxRequestBodyBytes = 6 * 1024 * 1024;
@@ -26,42 +28,41 @@ const sketchPalette = new Set(["#111318", "#f6f8f7", "#21e69a", "#0f9f68", "#6c7
 
 export function createSharedStateStore({ dataDir = process.env.KOTLETA_DATA_DIR ?? defaultDataDir } = {}) {
   const stateFile = resolve(dataDir, "social-state.json");
+  const dbFile = resolve(dataDir, "social-state.sqlite");
   const subscribers = new Set();
+  let database;
 
   async function read() {
-    try {
-      const raw = await readFile(stateFile, "utf8");
-      const payload = JSON.parse(raw);
-      if (!payload?.state || !Number.isFinite(payload.version)) {
-        throw new Error("Invalid shared state payload");
-      }
-
-      return {
-        state: sanitizeSocialState(payload.state),
-        version: payload.version,
-      };
-    } catch {
-      const payload = {
-        state: createDefaultState(),
-        version: Date.now(),
-      };
-      await write(payload.state, payload.version);
-      return payload;
-    }
+    const db = await ensureDatabase();
+    return readStatePayloadFromDatabase(db);
   }
 
   async function write(state, version = Date.now()) {
+    const db = await ensureDatabase();
     const payload = {
       state: sanitizeSocialState(state),
       version,
     };
-    const tempFile = `${stateFile}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
-    await mkdir(dirname(stateFile), { recursive: true });
-    await backupCurrentState(stateFile);
-    await writeFile(tempFile, JSON.stringify(payload, null, 2), "utf8");
-    await rename(tempFile, stateFile);
+    await backupCurrentDatabaseState(db, dataDir);
+    writeStatePayloadToDatabase(db, payload);
     notify(payload);
     return payload;
+  }
+
+  async function ensureDatabase() {
+    if (database) return database;
+
+    mkdirSync(dataDir, { recursive: true });
+    database = new DatabaseSync(dbFile);
+    initializeStateDatabase(database);
+
+    if (!hasDatabaseState(database)) {
+      const payload = await readLegacyStatePayload(stateFile);
+      if (existsSync(stateFile)) await backupCurrentState(stateFile);
+      writeStatePayloadToDatabase(database, payload);
+    }
+
+    return database;
   }
 
   function notify(payload) {
@@ -76,6 +77,7 @@ export function createSharedStateStore({ dataDir = process.env.KOTLETA_DATA_DIR 
   }
 
   return {
+    dbFile,
     read,
     stateFile,
     subscribe,
@@ -1059,6 +1061,402 @@ class ActionRejectedError extends Error {
   constructor(statusCode, message) {
     super(message);
     this.statusCode = statusCode;
+  }
+}
+
+function initializeStateDatabase(db) {
+  db.exec(`
+    PRAGMA journal_mode = WAL;
+    PRAGMA synchronous = NORMAL;
+    PRAGMA foreign_keys = ON;
+
+    CREATE TABLE IF NOT EXISTS state_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS site_sections (
+      id TEXT PRIMARY KEY,
+      sort_order INTEGER NOT NULL,
+      data TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      sort_order INTEGER NOT NULL,
+      data TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS walls (
+      id TEXT PRIMARY KEY,
+      sort_order INTEGER NOT NULL,
+      owner_id TEXT,
+      site_section_id TEXT NOT NULL,
+      data TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS posts (
+      id TEXT PRIMARY KEY,
+      sort_order INTEGER NOT NULL,
+      wall_id TEXT NOT NULL,
+      author_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      data TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS comments (
+      id TEXT PRIMARY KEY,
+      sort_order INTEGER NOT NULL,
+      post_id TEXT NOT NULL,
+      author_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      data TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS post_connections (
+      id TEXT PRIMARY KEY,
+      sort_order INTEGER NOT NULL,
+      from_post_id TEXT NOT NULL,
+      to_post_id TEXT NOT NULL,
+      author_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      data TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS follows (
+      id TEXT PRIMARY KEY,
+      sort_order INTEGER NOT NULL,
+      user_id TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      target_type TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      data TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS notifications (
+      id TEXT PRIMARY KEY,
+      sort_order INTEGER NOT NULL,
+      recipient_id TEXT NOT NULL,
+      actor_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      data TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS pixel_cells (
+      cell_key TEXT PRIMARY KEY,
+      sort_order INTEGER NOT NULL,
+      x INTEGER NOT NULL,
+      y INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      data TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS reports (
+      id TEXT PRIMARY KEY,
+      sort_order INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      data TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS utility_positions (
+      id TEXT PRIMARY KEY,
+      x INTEGER NOT NULL,
+      y INTEGER NOT NULL,
+      data TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS user_scoped_lists (
+      kind TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      ids TEXT NOT NULL,
+      PRIMARY KEY (kind, user_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS pixel_cooldowns (
+      user_id TEXT PRIMARY KEY,
+      timestamp INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS posts_wall_created_idx ON posts (wall_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS posts_author_idx ON posts (author_id);
+    CREATE INDEX IF NOT EXISTS comments_post_idx ON comments (post_id, created_at);
+    CREATE INDEX IF NOT EXISTS follows_user_idx ON follows (user_id, target_type);
+    CREATE INDEX IF NOT EXISTS notifications_recipient_idx ON notifications (recipient_id, created_at DESC);
+  `);
+}
+
+function hasDatabaseState(db) {
+  const row = db.prepare("SELECT value FROM state_meta WHERE key = ?").get("version");
+  return Number.isFinite(Number(row?.value));
+}
+
+async function readLegacyStatePayload(stateFile) {
+  try {
+    const raw = await readFile(stateFile, "utf8");
+    const payload = JSON.parse(raw);
+    if (payload?.state && Number.isFinite(payload.version)) {
+      return {
+        state: sanitizeSocialState(payload.state),
+        version: payload.version,
+      };
+    }
+  } catch {
+    // Missing or broken JSON state migrates to the default state.
+  }
+
+  return {
+    state: createDefaultState(),
+    version: Date.now(),
+  };
+}
+
+function readStatePayloadFromDatabase(db) {
+  const version = Number(readMetaValue(db, "version")) || Date.now();
+  const state = sanitizeSocialState({
+    siteSections: readJsonRows(db, "site_sections"),
+    users: readJsonRows(db, "users"),
+    activeUserId: readMetaValue(db, "activeUserId") ?? "guest",
+    walls: readJsonRows(db, "walls"),
+    posts: readJsonRows(db, "posts"),
+    comments: readJsonRows(db, "comments"),
+    utilityPositions: readUtilityPositions(db),
+    postConnections: readJsonRows(db, "post_connections"),
+    follows: readJsonRows(db, "follows"),
+    savedPostIdsByUser: readScopedLists(db, "savedPostIdsByUser"),
+    pinnedPostIdsByUser: readScopedLists(db, "pinnedPostIdsByUser"),
+    hiddenPostIdsByUser: readScopedLists(db, "hiddenPostIdsByUser"),
+    hiddenCommentIdsByUser: readScopedLists(db, "hiddenCommentIdsByUser"),
+    savedPostIds: readMetaJson(db, "savedPostIds", []),
+    pinnedPostIds: readMetaJson(db, "pinnedPostIds", []),
+    hiddenPostIds: readMetaJson(db, "hiddenPostIds", []),
+    hiddenCommentIds: readMetaJson(db, "hiddenCommentIds", []),
+    notifications: readJsonRows(db, "notifications"),
+    pixelCells: readJsonRows(db, "pixel_cells"),
+    pixelCooldowns: readPixelCooldowns(db),
+    reports: readJsonRows(db, "reports"),
+  });
+
+  return {
+    state,
+    version,
+  };
+}
+
+function writeStatePayloadToDatabase(db, payload) {
+  const state = sanitizeSocialState(payload.state);
+  const version = Number(payload.version) || Date.now();
+
+  runTransaction(db, () => {
+    clearStateTables(db);
+    setMetaValue(db, "version", String(version));
+    setMetaValue(db, "activeUserId", state.activeUserId);
+    setMetaJson(db, "savedPostIds", state.savedPostIds);
+    setMetaJson(db, "pinnedPostIds", state.pinnedPostIds);
+    setMetaJson(db, "hiddenPostIds", state.hiddenPostIds);
+    setMetaJson(db, "hiddenCommentIds", state.hiddenCommentIds);
+
+    insertJsonRows(db, "site_sections", state.siteSections, (section) => ({ id: section.id }));
+    insertJsonRows(db, "users", state.users, (user) => ({ id: user.id }));
+    insertJsonRows(db, "walls", state.walls, (wall) => ({
+      id: wall.id,
+      owner_id: wall.ownerId ?? null,
+      site_section_id: wall.siteSectionId,
+    }));
+    insertJsonRows(db, "posts", state.posts, (post) => ({
+      id: post.id,
+      wall_id: post.wallId,
+      author_id: post.authorId,
+      created_at: Number(post.createdAt) || 0,
+    }));
+    insertJsonRows(db, "comments", state.comments, (comment) => ({
+      id: comment.id,
+      post_id: comment.postId,
+      author_id: comment.authorId,
+      created_at: Number(comment.createdAt) || 0,
+    }));
+    insertJsonRows(db, "post_connections", state.postConnections, (connection) => ({
+      id: connection.id,
+      from_post_id: connection.fromPostId,
+      to_post_id: connection.toPostId,
+      author_id: connection.authorId,
+      created_at: Number(connection.createdAt) || 0,
+    }));
+    insertJsonRows(db, "follows", state.follows, (follow) => ({
+      id: follow.id,
+      user_id: follow.userId,
+      target_id: follow.targetId,
+      target_type: follow.targetType,
+      created_at: Number(follow.createdAt) || 0,
+    }));
+    insertJsonRows(db, "notifications", state.notifications, (notification) => ({
+      id: notification.id,
+      recipient_id: notification.recipientId,
+      actor_id: notification.actorId,
+      created_at: Number(notification.createdAt) || 0,
+    }));
+    insertJsonRows(db, "pixel_cells", state.pixelCells, (cell) => ({
+      cell_key: `${cell.x}:${cell.y}`,
+      x: cell.x,
+      y: cell.y,
+      updated_at: Number(cell.updatedAt) || 0,
+    }));
+    insertJsonRows(db, "reports", state.reports, (report) => ({
+      id: report.id,
+      created_at: Number(report.createdAt) || 0,
+    }));
+
+    insertUtilityPositions(db, state.utilityPositions);
+    insertScopedLists(db, "savedPostIdsByUser", state.savedPostIdsByUser);
+    insertScopedLists(db, "pinnedPostIdsByUser", state.pinnedPostIdsByUser);
+    insertScopedLists(db, "hiddenPostIdsByUser", state.hiddenPostIdsByUser);
+    insertScopedLists(db, "hiddenCommentIdsByUser", state.hiddenCommentIdsByUser);
+    insertPixelCooldowns(db, state.pixelCooldowns);
+  });
+
+  return {
+    state,
+    version,
+  };
+}
+
+function runTransaction(db, callback) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const result = callback();
+    db.exec("COMMIT");
+    return result;
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // Keep the original error.
+    }
+    throw error;
+  }
+}
+
+function clearStateTables(db) {
+  for (const table of [
+    "site_sections",
+    "users",
+    "walls",
+    "posts",
+    "comments",
+    "post_connections",
+    "follows",
+    "notifications",
+    "pixel_cells",
+    "reports",
+    "utility_positions",
+    "user_scoped_lists",
+    "pixel_cooldowns",
+  ]) {
+    db.prepare(`DELETE FROM ${table}`).run();
+  }
+}
+
+function readJsonRows(db, tableName) {
+  return db.prepare(`SELECT data FROM ${tableName} ORDER BY sort_order ASC`).all()
+    .flatMap((row) => parseJsonValue(row.data, null) ?? []);
+}
+
+function insertJsonRows(db, tableName, items, getColumns) {
+  if (!items.length) return;
+  const columns = Object.keys(getColumns(items[0]));
+  const placeholders = ["?", "?", ...columns.map(() => "?")].join(", ");
+  const statement = db.prepare(
+    `INSERT INTO ${tableName} (sort_order, data, ${columns.join(", ")}) VALUES (${placeholders})`,
+  );
+
+  items.forEach((item, index) => {
+    const values = Object.values(getColumns(item));
+    statement.run(index, JSON.stringify(item), ...values);
+  });
+}
+
+function readUtilityPositions(db) {
+  return Object.fromEntries(
+    db.prepare("SELECT id, data FROM utility_positions").all()
+      .map((row) => [row.id, parseJsonValue(row.data, null)])
+      .filter(([, position]) => Boolean(position)),
+  );
+}
+
+function insertUtilityPositions(db, positions) {
+  const statement = db.prepare("INSERT INTO utility_positions (id, x, y, data) VALUES (?, ?, ?, ?)");
+  for (const [id, position] of Object.entries(positions ?? {})) {
+    statement.run(id, position.x, position.y, JSON.stringify(position));
+  }
+}
+
+function readScopedLists(db, kind) {
+  return Object.fromEntries(
+    db.prepare("SELECT user_id, ids FROM user_scoped_lists WHERE kind = ?").all(kind)
+      .map((row) => [row.user_id, parseJsonValue(row.ids, [])])
+      .filter(([, ids]) => Array.isArray(ids)),
+  );
+}
+
+function insertScopedLists(db, kind, scopedLists) {
+  const statement = db.prepare("INSERT INTO user_scoped_lists (kind, user_id, ids) VALUES (?, ?, ?)");
+  for (const [userId, ids] of Object.entries(scopedLists ?? {})) {
+    if (!Array.isArray(ids)) continue;
+    statement.run(kind, userId, JSON.stringify(ids));
+  }
+}
+
+function readPixelCooldowns(db) {
+  return Object.fromEntries(
+    db.prepare("SELECT user_id, timestamp FROM pixel_cooldowns").all()
+      .map((row) => [row.user_id, Number(row.timestamp) || 0]),
+  );
+}
+
+function insertPixelCooldowns(db, cooldowns) {
+  const statement = db.prepare("INSERT INTO pixel_cooldowns (user_id, timestamp) VALUES (?, ?)");
+  for (const [userId, timestamp] of Object.entries(cooldowns ?? {})) {
+    statement.run(userId, Number(timestamp) || 0);
+  }
+}
+
+function readMetaValue(db, key) {
+  const row = db.prepare("SELECT value FROM state_meta WHERE key = ?").get(key);
+  return typeof row?.value === "string" ? row.value : undefined;
+}
+
+function setMetaValue(db, key, value) {
+  db.prepare("INSERT INTO state_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+    .run(key, value);
+}
+
+function readMetaJson(db, key, fallback) {
+  return parseJsonValue(readMetaValue(db, key), fallback);
+}
+
+function setMetaJson(db, key, value) {
+  setMetaValue(db, key, JSON.stringify(value));
+}
+
+function parseJsonValue(value, fallback) {
+  if (typeof value !== "string") return fallback;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
+async function backupCurrentDatabaseState(db, dataDir) {
+  if (!hasDatabaseState(db)) return;
+
+  try {
+    const backupDir = join(dataDir, "backups");
+    const payload = readStatePayloadFromDatabase(db);
+    await mkdir(backupDir, { recursive: true });
+    await writeFile(join(backupDir, `social-state.${Date.now()}.json`), JSON.stringify(payload, null, 2), "utf8");
+    await pruneStateBackups(backupDir);
+  } catch {
+    // Backups are safety net only; they must not block the main write.
   }
 }
 

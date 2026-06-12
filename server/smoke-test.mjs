@@ -2,11 +2,30 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
+import { createDefaultState } from "./default-state.mjs";
 
 const port = 43000 + Math.floor(Math.random() * 1000);
 const dataDir = await mkdtemp(join(tmpdir(), "kotleta-server-"));
 await mkdir(join(dataDir, "downloads"), { recursive: true });
 await writeFile(join(dataDir, "downloads", "smoke-pack.zip"), "zip smoke");
+const legacyState = createDefaultState();
+legacyState.posts = [
+  {
+    id: "legacy-smoke-post",
+    wallId: "main",
+    authorId: "guest",
+    text: "legacy migration smoke",
+    attachments: [],
+    reactions: 0,
+    views: { total: 0, uniqueUserIds: [] },
+    createdAt: Date.now(),
+  },
+  ...legacyState.posts,
+];
+await writeFile(join(dataDir, "social-state.json"), JSON.stringify({
+  state: legacyState,
+  version: Date.now() - 1000,
+}));
 const server = spawn(process.execPath, ["server/index.mjs"], {
   env: {
     ...process.env,
@@ -31,6 +50,7 @@ try {
 
   const health = await fetchJson(`http://127.0.0.1:${port}/api/health`);
   assert(health.ok === true, "health endpoint failed");
+  assert(typeof health.dbFile === "string" && health.dbFile.endsWith("social-state.sqlite"), "health endpoint should expose sqlite state file");
 
   const anonymousSession = await fetchJson(`http://127.0.0.1:${port}/api/auth/session`);
   assert(anonymousSession === null, "anonymous auth session should be null");
@@ -43,6 +63,7 @@ try {
   const snapshot = await fetchJson(`http://127.0.0.1:${port}/api/social-state`);
   assert(snapshot.state?.activeUserId === "guest", "shared state did not initialize as guest");
   assert(Array.isArray(snapshot.state?.posts), "shared state posts are missing");
+  assert(snapshot.state.posts.some((post) => post.id === "legacy-smoke-post"), "legacy JSON state did not migrate to sqlite");
 
   const eventController = new AbortController();
   const eventResponse = await fetch(`http://127.0.0.1:${port}/api/social-state/events`, {

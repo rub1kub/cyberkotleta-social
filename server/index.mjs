@@ -52,6 +52,7 @@ const server = createServer(async (request, response) => {
   if (url.pathname === "/api/health") {
     sendJson(response, {
       ok: true,
+      dbFile: store.dbFile,
       stateFile: store.stateFile,
       time: new Date().toISOString(),
     });
