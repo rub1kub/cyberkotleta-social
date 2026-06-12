@@ -218,6 +218,8 @@ export async function writeSharedSocialState(
   state: SocialState,
   expectedVersion: number | null,
 ): Promise<SharedStateSnapshot | null> {
+  if (import.meta.env.PROD) return null;
+
   try {
     const response = await fetch(sharedStatePath, {
       method: "PUT",

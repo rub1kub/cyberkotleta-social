@@ -8,6 +8,7 @@ import { createDefaultState } from "./default-state.mjs";
 const maxRequestBodyBytes = 6 * 1024 * 1024;
 const defaultDataDir = ".data";
 const maxStateBackups = 60;
+const allowFullStateWrites = process.env.KOTLETA_ALLOW_STATE_PUT === "1";
 const pixelColumns = 300;
 const pixelRows = 190;
 const maxPixelCells = pixelColumns * pixelRows;
@@ -187,6 +188,11 @@ export function createSocialStateHandler(store = createSharedStateStore()) {
       }
 
       if (request.method === "PUT") {
+        if (!allowFullStateWrites) {
+          sendText(response, 403, "Full state writes are disabled");
+          return;
+        }
+
         const body = await readRequestBody(request, maxRequestBodyBytes);
         const payload = JSON.parse(body || "{}");
         if (!payload.state) {

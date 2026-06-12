@@ -30,6 +30,7 @@ const server = spawn(process.execPath, ["server/index.mjs"], {
   env: {
     ...process.env,
     HOST: "127.0.0.1",
+    KOTLETA_ALLOW_STATE_PUT: "1",
     KOTLETA_DATA_DIR: dataDir,
     PORT: String(port),
   },
