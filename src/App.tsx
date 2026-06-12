@@ -59,7 +59,7 @@ import {
   Maximize2,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ChangeEvent, ClipboardEvent, CSSProperties, FormEvent } from "react";
+import type { ChangeEvent, ClipboardEvent, CSSProperties, DragEvent, FormEvent } from "react";
 import { flushSync } from "react-dom";
 import {
   buildDiscordAuthUrl,
@@ -137,7 +137,7 @@ const spaceSectionId = "space";
 const guestUserId = "guest";
 const anonymousGuestStorageKey = "kotleta.anonymous.guest.v1";
 const anonymousGuestPrefix = "guest:";
-const fieldLayoutStorageKey = "kotleta.field.layout.v1";
+const fieldLayoutStorageKey = "kotleta.field.layout.v2";
 const pinnedWallStorageKey = "kotleta.pinned.walls.v1";
 const boardGridSize = 24;
 const boardCardWidth = 318;
@@ -2409,7 +2409,7 @@ function FeedPage({
       ? spaces
       : [];
   const shouldShowBoardDirectory = !hasSearch && directorySpaces.length > 0;
-  const feedPositionOverrides = shouldShowBoardDirectory ? postPositions : undefined;
+  const feedPositionOverrides = postPositions;
   const feedDefaultOffsetY = getInitialFieldBoardDefaultY(shouldShowBoardDirectory);
   const fieldBoardHeight = getBoardCanvasHeight(posts, {
     defaultOffsetX: getInitialFieldBoardDefaultX(),
@@ -2504,7 +2504,7 @@ function FeedPage({
 
       <WallBoard
         activeUserId={activeUserId}
-        avoidProtectedRects={shouldShowBoardDirectory}
+        avoidProtectedRects={false}
         canMovePost={() => true}
         className="field-board"
         commentsByPostId={commentsByPostId}
@@ -3367,6 +3367,7 @@ function Composer({
   const [options, setOptions] = useState<PostDraftOptions>(() => createDefaultPostDraftOptions());
   const [isAttachMenuOpen, setIsAttachMenuOpen] = useState(false);
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
+  const [isDraggingFiles, setIsDraggingFiles] = useState(false);
   const [isReading, setIsReading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const composerClassName = [
@@ -3375,6 +3376,7 @@ function Composer({
     objectTools ? `post-bg-${options.appearance.background}` : "",
     objectTools ? `post-shape-${options.appearance.shape}` : "",
     objectTools ? `post-size-${options.appearance.size}` : "",
+    isDraggingFiles ? "is-dragging-files" : "",
     className,
   ].filter(Boolean).join(" ");
   const composerStyle = objectTools ? getPostAccentStyle(options.appearance, wall) : undefined;
@@ -3429,6 +3431,37 @@ function Composer({
 
     event.preventDefault();
     void attachFiles(pastedFiles);
+  }
+
+  function hasDraggedFiles(dataTransfer: DataTransfer) {
+    return Array.from(dataTransfer.types).includes("Files");
+  }
+
+  function handleDragOver(event: DragEvent<HTMLElement>) {
+    if (!hasDraggedFiles(event.dataTransfer)) return;
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setIsDraggingFiles(true);
+  }
+
+  function handleDragLeave(event: DragEvent<HTMLElement>) {
+    const nextTarget = event.relatedTarget;
+    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
+
+    setIsDraggingFiles(false);
+  }
+
+  function handleDrop(event: DragEvent<HTMLElement>) {
+    if (!hasDraggedFiles(event.dataTransfer)) return;
+
+    event.preventDefault();
+    setIsDraggingFiles(false);
+
+    const files = Array.from(event.dataTransfer.files).filter((file) => getMediaKind(file));
+    if (files.length > 0) {
+      void attachFiles(files);
+    }
   }
 
   function openFilePicker() {
@@ -3513,7 +3546,13 @@ function Composer({
   }
 
   return (
-    <section className={composerClassName} style={composerStyle}>
+    <section
+      className={composerClassName}
+      style={composerStyle}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       {targetLabel ? (
         <div className="composer-target">
           <span>Публикация</span>
@@ -4240,6 +4279,56 @@ function BoardConnectionLayer({
   );
 }
 
+function WallColorPicker({
+  compact = false,
+  value,
+  onChange,
+}: {
+  compact?: boolean;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const accentOption = getWallAccentOption(value);
+  const customAccentValue = normalizeHexColor(value) ?? accentOption.accent;
+  const isCustom = accentOption.label === "Свой";
+
+  return (
+    <div className={compact ? "wall-color-editor compact" : "wall-color-editor"}>
+      <span>Цвет доски</span>
+      <div className="wall-color-options" role="radiogroup" aria-label="Цвет доски">
+        {wallAccentOptions.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            className={value === option.id ? "active" : ""}
+            onClick={() => onChange(option.id)}
+            role="radio"
+            aria-checked={value === option.id}
+            style={{ "--wall-swatch": option.accent } as CSSProperties}
+          >
+            <i />
+            <span>{option.label}</span>
+          </button>
+        ))}
+      </div>
+      <label
+        className={isCustom ? "wall-custom-color active" : "wall-custom-color"}
+        style={{ "--wall-swatch": customAccentValue } as CSSProperties}
+      >
+        <i aria-hidden="true" />
+        <span>Свой цвет</span>
+        <strong>{customAccentValue.toUpperCase()}</strong>
+        <input
+          type="color"
+          value={customAccentValue}
+          onChange={(event) => onChange(event.target.value)}
+          aria-label="Свой цвет доски"
+        />
+      </label>
+    </div>
+  );
+}
+
 function CreateSpaceDialog({
   onClose,
   onCreate,
@@ -4332,9 +4421,6 @@ function CreateSpaceDialog({
     });
   }
 
-  const accentOption = getWallAccentOption(accentColor);
-  const customAccentValue = normalizeHexColor(accentColor) ?? accentOption.accent;
-
   return (
     <div
       className={isClosing ? "create-space-layer closing" : "create-space-layer"}
@@ -4384,34 +4470,7 @@ function CreateSpaceDialog({
           </section>
         </div>
         {mediaError ? <div className="inline-error compact">{mediaError}</div> : null}
-        <div className="wall-color-editor compact">
-          <span>Цвет доски</span>
-          <div className="wall-color-options" role="radiogroup" aria-label="Цвет доски">
-            {wallAccentOptions.map((option) => (
-              <button
-                key={option.id}
-                type="button"
-                className={accentColor === option.id ? "active" : ""}
-                onClick={() => setAccentColor(option.id)}
-                role="radio"
-                aria-checked={accentColor === option.id}
-                style={{ "--wall-swatch": option.accent } as CSSProperties}
-              >
-                <i />
-                <span>{option.label}</span>
-              </button>
-            ))}
-          </div>
-          <label className="wall-custom-color">
-            <span>Свой</span>
-            <input
-              type="color"
-              value={customAccentValue}
-              onChange={(event) => setAccentColor(event.target.value)}
-            />
-            <small>{accentOption.label === "Свой" ? accentOption.accent : "любой цвет"}</small>
-          </label>
-        </div>
+        <WallColorPicker compact value={accentColor} onChange={setAccentColor} />
         <label>
           <span>Описание</span>
           <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} />
@@ -4497,7 +4556,6 @@ function WallSettingsDialog({
   const [uploadingTarget, setUploadingTarget] = useState<"avatar" | "banner" | null>(null);
   const [isDeleteArmed, setIsDeleteArmed] = useState(false);
   const accentOption = getWallAccentOption(accentColor);
-  const customAccentValue = normalizeHexColor(accentColor) ?? accentOption.accent;
   const previewStyle = {
     ...getWallAccentCssVars(accentOption),
     ...(bannerUrl ? { "--banner-image": `url(${bannerUrl})` } : {}),
@@ -4701,34 +4759,7 @@ function WallSettingsDialog({
           </section>
         </div>
         {mediaError ? <div className="inline-error compact">{mediaError}</div> : null}
-        <div className="wall-color-editor">
-          <span>Цвет доски</span>
-          <div className="wall-color-options" role="radiogroup" aria-label="Цвет доски">
-            {wallAccentOptions.map((option) => (
-              <button
-                key={option.id}
-                type="button"
-                className={accentColor === option.id ? "active" : ""}
-                onClick={() => setAccentColor(option.id)}
-                role="radio"
-                aria-checked={accentColor === option.id}
-                style={{ "--wall-swatch": option.accent } as CSSProperties}
-              >
-                <i />
-                <span>{option.label}</span>
-              </button>
-            ))}
-          </div>
-          <label className="wall-custom-color">
-            <span>Свой</span>
-            <input
-              type="color"
-              value={customAccentValue}
-              onChange={(event) => setAccentColor(event.target.value)}
-            />
-            <small>{accentOption.label === "Свой" ? accentOption.accent : "любой цвет"}</small>
-          </label>
-        </div>
+        <WallColorPicker value={accentColor} onChange={setAccentColor} />
         <label>
           <span>Описание</span>
           <textarea value={description} onChange={(event) => setDescription(event.target.value)} />

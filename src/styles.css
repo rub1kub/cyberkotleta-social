@@ -523,6 +523,16 @@ textarea:focus-visible {
   animation: enter 0.28s var(--ease-out) both;
 }
 
+.composer-card.is-dragging-files {
+  border-color: color-mix(in srgb, var(--post-accent, var(--accent)) 58%, var(--line));
+  background:
+    radial-gradient(circle at 50% 20%, color-mix(in srgb, var(--post-accent-soft, var(--accent-soft)) 82%, transparent), transparent 44%),
+    var(--surface);
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--post-accent, var(--accent)) 12%, transparent),
+    var(--shadow);
+}
+
 .composer-card textarea {
   width: 100%;
   min-height: 72px;
@@ -1094,8 +1104,8 @@ button:disabled {
 }
 
 .react-button.reacting {
-  border-color: var(--accent);
-  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--post-accent, var(--accent)) 42%, transparent);
+  background: var(--post-accent-soft, var(--accent-soft));
 }
 
 .react-button.reacting svg {
@@ -5032,11 +5042,11 @@ body {
 }
 
 .post-footer .react-button {
-  color: var(--accent-2);
+  color: var(--post-accent-2, var(--accent-2));
 }
 
 .post-footer .react-button .react-icon {
-  background: var(--accent-soft);
+  background: var(--post-accent-soft, var(--accent-soft));
 }
 
 .post-footer .post-stat:hover,
@@ -5059,19 +5069,19 @@ body {
 
 .post-footer .react-button {
   min-width: 58px;
-  background: color-mix(in srgb, var(--accent) 14%, var(--surface-muted));
-  color: var(--accent-2);
+  background: color-mix(in srgb, var(--post-accent, var(--accent)) 14%, var(--surface-muted));
+  color: var(--post-accent-2, var(--accent-2));
 }
 
 .post-footer .react-button .react-icon,
 .post-footer .react-button .react-count {
-  color: var(--accent-2);
+  color: var(--post-accent-2, var(--accent-2));
 }
 
 :root[data-theme="dark"] .post-footer .react-button,
 :root[data-theme="dark"] .post-footer .react-button .react-icon,
 :root[data-theme="dark"] .post-footer .react-button .react-count {
-  color: var(--accent);
+  color: var(--post-accent, var(--accent));
 }
 
 .post-footer .comments-stat {
@@ -7732,29 +7742,72 @@ button:focus-visible {
 }
 
 .wall-custom-color {
-  display: flex;
+  position: relative;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
   min-height: 44px;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+  overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 16px;
   background: color-mix(in srgb, var(--surface-muted) 50%, var(--surface));
   padding: 8px 10px;
+  cursor: pointer;
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease,
+    transform 0.16s ease;
+}
+
+.wall-custom-color:hover,
+.wall-custom-color.active {
+  border-color: color-mix(in srgb, var(--wall-swatch) 58%, var(--line));
+  background: color-mix(in srgb, var(--wall-swatch) 12%, var(--surface));
+}
+
+.wall-custom-color:hover {
+  transform: translateY(-1px);
+}
+
+.wall-custom-color i {
+  width: 34px;
+  height: 34px;
+  border: 1px solid color-mix(in srgb, #000000 14%, transparent);
+  border-radius: 12px;
+  background: var(--wall-swatch);
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--wall-swatch) 12%, transparent),
+    0 10px 24px color-mix(in srgb, var(--wall-swatch) 18%, transparent);
 }
 
 .wall-custom-color span {
+  min-width: 0;
   color: var(--text);
   font-size: 13px;
   font-weight: 850;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wall-custom-color strong {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 850;
+  letter-spacing: 0;
 }
 
 .wall-custom-color input {
-  width: 44px;
-  height: 32px;
-  flex: 0 0 auto;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   border: 0;
-  border-radius: 10px;
   background: transparent;
+  cursor: pointer;
+  opacity: 0;
   padding: 0;
 }
 
