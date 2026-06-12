@@ -2901,6 +2901,7 @@ function WallBoard({
               <PostCard
                 activeUserId={activeUserId}
                 commentCount={commentCount}
+                canCreateConnection={canDragPost}
                 connectionSourcePostId={connectionSourcePostId}
                 hasReposted={hasUserRepostedPost(post.id, activeUserId, postById)}
                 isPinned={pinnedPostIds.has(post.id)}
@@ -4999,6 +5000,7 @@ function MobileComposerSheet({
 function PostCard({
   activeUserId,
   commentCount,
+  canCreateConnection = false,
   connectionSourcePostId,
   hasReposted,
   isPinned,
@@ -5028,6 +5030,7 @@ function PostCard({
 }: {
   activeUserId: string | undefined;
   commentCount: number;
+  canCreateConnection?: boolean;
   connectionSourcePostId: string | null;
   hasReposted: boolean;
   isPinned: boolean;
@@ -5087,7 +5090,7 @@ function PostCard({
   const isMinecraftDownload = post.id === minecraftDownloadPostId && post.wallId === minecraftWallId;
   const postSettings = getPostSettings(post);
   const postAppearance = getPostAppearance(post);
-  const canFinishConnection = Boolean(connectionSourcePostId && connectionSourcePostId !== post.id);
+  const canFinishConnection = Boolean(canCreateConnection && connectionSourcePostId && connectionSourcePostId !== post.id);
 
   useEffect(() => {
     return () => {
@@ -5275,7 +5278,7 @@ function PostCard({
   }
 
   function handleCardClickCapture(event: React.MouseEvent<HTMLElement>) {
-    if (isEditing || isMenuOpen || !connectionSourcePostId) return;
+    if (isEditing || isMenuOpen || !canFinishConnection) return;
     if (isPostConnectionClickIgnored(event.target)) return;
 
     event.preventDefault();
@@ -5417,13 +5420,15 @@ function PostCard({
                 Стрелка сюда
               </button>
             ) : null}
-            <button onClick={() => {
-              onStartConnection(post.id);
-              setIsMenuOpen(false);
-            }}>
-              <ArrowRight size={15} />
-              Стрелка отсюда
-            </button>
+            {canCreateConnection ? (
+              <button onClick={() => {
+                onStartConnection(post.id);
+                setIsMenuOpen(false);
+              }}>
+                <ArrowRight size={15} />
+                Стрелка отсюда
+              </button>
+            ) : null}
             {isOwnPost ? (
               <button onClick={() => onPin(post.id)}>
                 <Pin size={15} />
