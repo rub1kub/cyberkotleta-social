@@ -102,6 +102,81 @@ try {
   assert(rejectedRegression.rejected?.reason === "users-regression", "destructive state write should explain rejection");
   assert(rejectedRegression.state.users.length === updated.state.users.length, "destructive state write should not persist");
 
+  const actionCreated = await fetchJson(`http://127.0.0.1:${port}/api/social-state/actions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      type: "post.create",
+      actorId: "guest",
+      post: {
+        id: "action-smoke-post",
+        wallId: "main",
+        text: "action smoke",
+        attachments: [],
+        position: { x: 48, y: 72 },
+      },
+    }),
+  });
+  assert(actionCreated.state.posts.some((post) => post.id === "action-smoke-post"), "post.create action did not persist");
+
+  const actionMoved = await fetchJson(`http://127.0.0.1:${port}/api/social-state/actions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      type: "post.move",
+      actorId: "rub1kub",
+      postId: "action-smoke-post",
+      x: 240,
+      y: 264,
+    }),
+  });
+  assert(
+    actionMoved.state.posts.find((post) => post.id === "action-smoke-post")?.position?.x === 240,
+    "post.move action did not persist",
+  );
+
+  const actionReacted = await fetchJson(`http://127.0.0.1:${port}/api/social-state/actions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      type: "post.react",
+      actorId: "guest",
+      postId: "action-smoke-post",
+      amount: 3,
+    }),
+  });
+  assert(
+    actionReacted.state.posts.find((post) => post.id === "action-smoke-post")?.reactions === 3,
+    "post.react action did not persist",
+  );
+
+  const actionViewed = await fetchJson(`http://127.0.0.1:${port}/api/social-state/actions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      type: "post.view",
+      actorId: "guest",
+      postId: "action-smoke-post",
+    }),
+  });
+  assert(
+    actionViewed.state.posts.find((post) => post.id === "action-smoke-post")?.views?.uniqueUserIds?.includes("guest"),
+    "post.view action did not persist",
+  );
+
+  const actionPixel = await fetchJson(`http://127.0.0.1:${port}/api/social-state/actions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      type: "pixel.paint",
+      actorId: "guest",
+      x: 1,
+      y: 2,
+      color: "#21e69a",
+    }),
+  });
+  assert(actionPixel.state.pixelCells.some((cell) => cell.x === 1 && cell.y === 2), "pixel.paint action did not persist");
+
   const rootHtml = await fetchText(`http://127.0.0.1:${port}/`);
   assert(rootHtml.includes("<!doctype html>"), "root HTML did not serve dist");
 

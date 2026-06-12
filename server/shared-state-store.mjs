@@ -9,10 +9,14 @@ const maxStateBackups = 60;
 const pixelColumns = 300;
 const pixelRows = 190;
 const maxPixelCells = pixelColumns * pixelRows;
+const pixelCooldownMs = 1000;
 const pixelPalette = new Set(["#111318", "#f6f8f7", "#21e69a", "#0f9f68", "#6c7685", "#5c6cff", "#d93862"]);
 const minecraftWallId = "space:minecraft";
 const minecraftDownloadPostId = "minecraft-download-post";
 const minecraftDownloadObjectId = "minecraft:download-card";
+const profileWallPrefix = "profile:";
+const spaceSectionId = "space";
+const minecraftAdminUserIds = new Set(["rub1kub", "discord:1129003754818125915", "discord:476391268671291393"]);
 const postKinds = new Set(["note", "media", "sketch", "idea", "list", "question", "poll", "checklist", "link", "signal"]);
 const postBackgrounds = new Set(["plain", "soft", "glass", "gradient", "paper"]);
 const postShapes = new Set(["soft", "round", "sharp", "ticket"]);
@@ -118,6 +122,37 @@ export function createSocialStateEventsHandler(store = createSharedStateStore())
   };
 }
 
+export function createSocialStateActionHandler(store = createSharedStateStore()) {
+  return async function handleSocialStateAction(request, response) {
+    try {
+      if (request.method !== "POST") {
+        response.setHeader("Allow", "POST");
+        sendText(response, 405, "Method not allowed");
+        return;
+      }
+
+      const body = await readRequestBody(request, maxRequestBodyBytes);
+      const action = JSON.parse(body || "{}");
+      const current = await store.read();
+      const nextState = applySocialStateAction(current.state, action);
+      sendJson(response, await store.write(nextState));
+    } catch (error) {
+      if (error instanceof RequestBodyTooLargeError) {
+        sendText(response, 413, "Action payload is too large");
+        return;
+      }
+
+      if (error instanceof ActionRejectedError) {
+        sendText(response, error.statusCode, error.message);
+        return;
+      }
+
+      console.error(error);
+      sendText(response, 500, "Shared action error");
+    }
+  };
+}
+
 export function createSocialStateHandler(store = createSharedStateStore()) {
   return async function handleSocialState(request, response) {
     try {
@@ -163,6 +198,318 @@ export function createSocialStateHandler(store = createSharedStateStore()) {
       sendText(response, 500, "Shared state error");
     }
   };
+}
+
+function applySocialStateAction(state, action) {
+  if (!action || typeof action !== "object" || typeof action.type !== "string") {
+    throw new ActionRejectedError(400, "Missing action type");
+  }
+
+  const actorId = normalizeActionId(action.actorId);
+  if (!actorId) throw new ActionRejectedError(400, "Missing actor");
+
+  const withActor = upsertActionActor(state, action.actor, actorId);
+
+  switch (action.type) {
+    case "post.create":
+      return applyCreatePostAction(withActor, action, actorId);
+    case "post.move":
+      return applyMovePostAction(withActor, action, actorId);
+    case "post.react":
+      return applyReactPostAction(withActor, action, actorId);
+    case "post.view":
+      return applyViewPostAction(withActor, action, actorId);
+    case "pixel.paint":
+      return applyPaintPixelAction(withActor, action, actorId);
+    default:
+      throw new ActionRejectedError(400, "Unknown action type");
+  }
+}
+
+function applyCreatePostAction(state, action, actorId) {
+  const incomingPost = action.post;
+  if (!incomingPost || typeof incomingPost !== "object") {
+    throw new ActionRejectedError(400, "Missing post");
+  }
+
+  const wallId = normalizeActionId(incomingPost.wallId);
+  if (!wallId) throw new ActionRejectedError(400, "Missing wall");
+
+  const stateWithWall = ensureActionWallExists(state, wallId, actorId);
+  const wall = stateWithWall.walls.find((item) => item.id === wallId);
+  if (!canPublishToWall(wall, actorId)) throw new ActionRejectedError(403, "Cannot publish to wall");
+
+  const postId = normalizeActionId(incomingPost.id) || randomUUID();
+  if (stateWithWall.posts.some((post) => post.id === postId)) return stateWithWall;
+
+  const normalized = sanitizeSocialState({
+    ...stateWithWall,
+    posts: [
+      {
+        id: postId,
+        wallId,
+        authorId: actorId,
+        kind: incomingPost.kind,
+        text: typeof incomingPost.text === "string" ? incomingPost.text.slice(0, 8000) : "",
+        attachments: Array.isArray(incomingPost.attachments) ? incomingPost.attachments : [],
+        reactions: 0,
+        views: { total: 0, uniqueUserIds: [] },
+        position: normalizePosition(incomingPost.position),
+        appearance: incomingPost.appearance,
+        settings: incomingPost.settings,
+        sketch: incomingPost.sketch,
+        checklist: incomingPost.checklist,
+        poll: incomingPost.poll,
+        repostOfId: typeof incomingPost.repostOfId === "string" ? incomingPost.repostOfId : undefined,
+        createdAt: Number(incomingPost.createdAt) || Date.now(),
+      },
+      ...stateWithWall.posts,
+    ],
+  });
+
+  return {
+    ...normalized,
+    notifications: [
+      ...buildMentionNotifications(normalized, actorId, postId, incomingPost.text ?? ""),
+      ...normalized.notifications,
+    ],
+  };
+}
+
+function applyMovePostAction(state, action, actorId) {
+  const postId = normalizeActionId(action.postId);
+  const targetPost = state.posts.find((post) => post.id === postId);
+  if (!targetPost) throw new ActionRejectedError(404, "Post not found");
+  if (!canMovePost(targetPost, state.walls, actorId)) throw new ActionRejectedError(403, "Cannot move post");
+
+  const position = normalizePosition({ x: action.x, y: action.y });
+  if (!position) throw new ActionRejectedError(400, "Invalid position");
+
+  return {
+    ...state,
+    posts: state.posts.map((post) => post.id === postId ? { ...post, position } : post),
+  };
+}
+
+function applyReactPostAction(state, action, actorId) {
+  const postId = normalizeActionId(action.postId);
+  const amount = Math.max(1, Math.min(100, Math.floor(Number(action.amount) || 1)));
+  const targetPost = state.posts.find((post) => post.id === postId);
+  if (!targetPost) throw new ActionRejectedError(404, "Post not found");
+  if (getPostSettings(targetPost).reactions === false) return state;
+
+  return {
+    ...state,
+    posts: state.posts.map((post) =>
+      post.id === postId ? { ...post, reactions: Math.max(0, Number(post.reactions) || 0) + amount } : post,
+    ),
+    notifications: addPostNotification(state, {
+      kind: "reaction",
+      actorId,
+      postId,
+      text: `Новый огонёк ×${amount}`,
+    }),
+  };
+}
+
+function applyViewPostAction(state, action, actorId) {
+  const postId = normalizeActionId(action.postId);
+  const targetPost = state.posts.find((post) => post.id === postId);
+  if (!targetPost) throw new ActionRejectedError(404, "Post not found");
+  if (getPostSettings(targetPost).views === false) return state;
+
+  return {
+    ...state,
+    posts: state.posts.map((post) => {
+      if (post.id !== postId) return post;
+      const uniqueUserIds = Array.from(new Set([...(post.views?.uniqueUserIds ?? []), actorId]));
+      return {
+        ...post,
+        views: {
+          total: uniqueUserIds.length,
+          uniqueUserIds,
+        },
+      };
+    }),
+  };
+}
+
+function applyPaintPixelAction(state, action, actorId) {
+  const now = Date.now();
+  const lastPixelAt = state.pixelCooldowns[actorId] ?? 0;
+  if (now - lastPixelAt < pixelCooldownMs) return state;
+
+  const cell = normalizePixelCell({
+    x: action.x,
+    y: action.y,
+    color: action.color,
+    authorId: actorId,
+    updatedAt: now,
+  }, new Set(state.users.map((user) => user.id)));
+  if (!cell) throw new ActionRejectedError(400, "Invalid pixel");
+
+  const cellKey = `${cell.x}:${cell.y}`;
+  const nextCells = [
+    ...state.pixelCells.filter((item) => `${item.x}:${item.y}` !== cellKey),
+    cell,
+  ].slice(-maxPixelCells);
+
+  return {
+    ...state,
+    pixelCells: nextCells,
+    pixelCooldowns: {
+      ...state.pixelCooldowns,
+      [actorId]: now,
+    },
+  };
+}
+
+function normalizeActionId(value) {
+  if (typeof value !== "string") return "";
+  return value.trim().slice(0, 160);
+}
+
+function upsertActionActor(state, actor, actorId) {
+  const normalizedActor = normalizeActionActor(actor, actorId);
+  const existing = state.users.find((user) => user.id === actorId);
+  const nextUser = {
+    ...(existing ?? normalizedActor),
+    ...normalizedActor,
+    lastSeenAt: Date.now(),
+  };
+
+  return {
+    ...state,
+    users: existing
+      ? state.users.map((user) => user.id === actorId ? nextUser : user)
+      : [nextUser, ...state.users],
+  };
+}
+
+function normalizeActionActor(actor, actorId) {
+  const fallbackName = actorId === "guest" || actorId.startsWith("guest:") ? "Гость" : actorId;
+  const candidate = actor && typeof actor === "object"
+    ? {
+        id: actorId,
+        name: typeof actor.name === "string" && actor.name.trim() ? actor.name.trim().slice(0, 32) : fallbackName,
+        handle: typeof actor.handle === "string" && actor.handle.trim()
+          ? actor.handle.trim().slice(0, 40)
+          : `@${actorId.replace(/[^a-z0-9_]/gi, "_").slice(0, 24)}`,
+        bio: typeof actor.bio === "string" ? actor.bio.slice(0, 180) : "",
+        status: typeof actor.status === "string" ? actor.status.slice(0, 40) : undefined,
+        joinedAt: Number(actor.joinedAt) || Date.now(),
+        lastSeenAt: Date.now(),
+        timeOnSiteMinutes: Math.max(0, Number(actor.timeOnSiteMinutes) || 0),
+        avatarUrl: normalizeOptionalUrl(actor.avatarUrl),
+        provider: actor.provider === "discord" || actor.provider === "local" ? actor.provider : undefined,
+        discordId: typeof actor.discordId === "string" ? actor.discordId : undefined,
+      }
+    : {
+        id: actorId,
+        name: fallbackName,
+        handle: `@${actorId.replace(/[^a-z0-9_]/gi, "_").slice(0, 24)}`,
+        bio: "",
+        joinedAt: Date.now(),
+        lastSeenAt: Date.now(),
+        timeOnSiteMinutes: 0,
+      };
+
+  return normalizeUsers([candidate], [candidate])[0] ?? candidate;
+}
+
+function ensureActionWallExists(state, wallId, actorId) {
+  if (state.walls.some((wall) => wall.id === wallId)) return state;
+  if (!wallId.startsWith(profileWallPrefix)) return state;
+
+  const userId = wallId.slice(profileWallPrefix.length);
+  const user = state.users.find((item) => item.id === userId);
+  if (!user && userId !== actorId) return state;
+
+  return {
+    ...state,
+    walls: [
+      {
+        id: wallId,
+        siteSectionId: wallId,
+        name: user ? user.name : "Профиль",
+        ownerId: userId,
+        description: user?.bio ?? "",
+        publishMode: "open",
+      },
+      ...state.walls,
+    ],
+  };
+}
+
+function canManageWall(wall, userId) {
+  if (!wall || !userId) return false;
+  if (wall.id.startsWith(profileWallPrefix)) return wall.id === `${profileWallPrefix}${userId}`;
+  if (wall.id === minecraftWallId) return minecraftAdminUserIds.has(userId) || wall.ownerId === userId;
+  return wall.ownerId === userId;
+}
+
+function canMovePost(post, walls, userId) {
+  if (!post || !userId) return false;
+  if (post.wallId.startsWith(profileWallPrefix)) return post.wallId === `${profileWallPrefix}${userId}`;
+  return canManageWall(walls.find((wall) => wall.id === post.wallId), userId);
+}
+
+function canPublishToWall(wall, userId) {
+  if (!wall || !userId) return false;
+  if (wall.id.startsWith(profileWallPrefix)) return true;
+  return wall.publishMode !== "owner" || canManageWall(wall, userId);
+}
+
+function getPostSettings(post) {
+  return {
+    comments: post?.settings?.comments !== false,
+    reactions: post?.settings?.reactions !== false,
+    reposts: post?.settings?.reposts !== false,
+    saves: post?.settings?.saves !== false,
+    views: post?.settings?.views !== false,
+  };
+}
+
+function addPostNotification(state, { actorId, kind, postId, text }) {
+  const post = state.posts.find((item) => item.id === postId);
+  if (!post || post.authorId === actorId) return state.notifications;
+
+  return [
+    {
+      id: randomUUID(),
+      kind,
+      actorId,
+      recipientId: post.authorId,
+      postId,
+      text,
+      createdAt: Date.now(),
+    },
+    ...state.notifications,
+  ];
+}
+
+function buildMentionNotifications(state, actorId, postId, text) {
+  if (typeof text !== "string" || !text.includes("@")) return [];
+  const lowerText = text.toLowerCase();
+
+  return state.users
+    .filter((user) => user.id !== actorId && typeof user.handle === "string" && lowerText.includes(user.handle.toLowerCase()))
+    .map((user) => ({
+      id: randomUUID(),
+      kind: "mention",
+      actorId,
+      recipientId: user.id,
+      postId,
+      text: "Вас упомянули",
+      createdAt: Date.now(),
+    }));
+}
+
+class ActionRejectedError extends Error {
+  constructor(statusCode, message) {
+    super(message);
+    this.statusCode = statusCode;
+  }
 }
 
 async function backupCurrentState(stateFile) {

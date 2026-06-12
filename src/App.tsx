@@ -72,7 +72,13 @@ import {
 } from "./auth";
 import type { DiscordSession } from "./auth";
 import { createMediaAttachment } from "./mediaUpload";
-import { readSharedSocialState, subscribeSharedSocialState, writeSharedSocialState } from "./sharedState";
+import {
+  dispatchSharedSocialAction,
+  readSharedSocialState,
+  subscribeSharedSocialState,
+  writeSharedSocialState,
+} from "./sharedState";
+import type { SharedStateAction } from "./sharedState";
 import { readSocialState, readTheme, socialStateStorageKey, writeSocialState, writeTheme } from "./storage";
 import type {
   Comment,
@@ -499,6 +505,17 @@ function App() {
       setState((current) => mergeSharedStateWithLocalSession(current, snapshot.state));
     }
   }, []);
+  const dispatchSharedAction = useCallback((action: SharedStateAction) => {
+    if (!sharedStateReadyRef.current) return;
+    skipNextSharedStateWriteRef.current = true;
+
+    void dispatchSharedSocialAction(action).then((snapshot) => {
+      if (!snapshot) return;
+      sharedStateVersionRef.current = snapshot.version;
+      skipNextSharedStateWriteRef.current = true;
+      setState((current) => mergeSharedStateWithLocalSession(current, snapshot.state));
+    });
+  }, []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -817,6 +834,9 @@ function App() {
     if (!wallId || !activeUser) return;
     const postOptions = normalizePostDraftOptions(options, attachments);
     if (!hasPublishablePostDraft(text, attachments, postOptions)) return;
+    const walls = ensureWallExists(state.walls, wallId, state.users);
+    const targetWall = walls.find((wall) => wall.id === wallId);
+    if (!canPublishToWall(targetWall, activeUser.id)) return;
     const position = getNewBoardPostPosition(state.posts.filter((post) => post.wallId === wallId), {
       appearance: postOptions.appearance,
       attachments,
@@ -825,36 +845,31 @@ function App() {
       sketch: postOptions.sketch,
       text: text.trim(),
     });
+    const post: Post = {
+      id: crypto.randomUUID(),
+      wallId,
+      authorId: activeUser.id,
+      kind: postOptions.kind,
+      text: text.trim(),
+      attachments,
+      reactions: 0,
+      views: {
+        total: 0,
+        uniqueUserIds: [],
+      },
+      position,
+      appearance: postOptions.appearance,
+      settings: postOptions.settings,
+      sketch: postOptions.sketch,
+      checklist: postOptions.checklist,
+      poll: postOptions.poll,
+      createdAt: Date.now(),
+    };
 
     setState((current) => {
-      const walls = ensureWallExists(current.walls, wallId, current.users);
-      const targetWall = walls.find((wall) => wall.id === wallId);
-      if (!canPublishToWall(targetWall, activeUser.id)) return current;
-
-      const post: Post = {
-        id: crypto.randomUUID(),
-        wallId,
-        authorId: activeUser.id,
-        kind: postOptions.kind,
-        text: text.trim(),
-        attachments,
-        reactions: 0,
-        views: {
-          total: 0,
-          uniqueUserIds: [],
-        },
-        position,
-        appearance: postOptions.appearance,
-        settings: postOptions.settings,
-        sketch: postOptions.sketch,
-        checklist: postOptions.checklist,
-        poll: postOptions.poll,
-        createdAt: Date.now(),
-      };
-
       return {
         ...current,
-        walls,
+        walls: ensureWallExists(current.walls, wallId, current.users),
         posts: [post, ...current.posts],
         notifications: [
           ...buildMentionNotifications({
@@ -867,11 +882,21 @@ function App() {
         ],
       };
     });
+    dispatchSharedAction({
+      type: "post.create",
+      actorId: activeUser.id,
+      actor: activeUser,
+      post,
+    });
     setIsMobileComposerOpen(false);
     celebrate("post");
   }
 
   function movePost(postId: string, x: number, y: number) {
+    const position = clampPostPosition({
+      x: Math.round(x / boardGridSize) * boardGridSize,
+      y: Math.round(y / boardGridSize) * boardGridSize,
+    });
     setState((current) => {
       const targetPost = current.posts.find((post) => post.id === postId);
       if (!canMoveSharedPost(targetPost, current.walls, current.activeUserId)) return current;
@@ -882,15 +907,23 @@ function App() {
           post.id === postId
             ? {
                 ...post,
-                position: clampPostPosition({
-                  x: Math.round(x / boardGridSize) * boardGridSize,
-                  y: Math.round(y / boardGridSize) * boardGridSize,
-                }),
+                position,
               }
             : post,
         ),
       };
     });
+
+    if (activeUser) {
+      dispatchSharedAction({
+        type: "post.move",
+        actorId: activeUser.id,
+        actor: activeUser,
+        postId,
+        x: position.x,
+        y: position.y,
+      });
+    }
   }
 
   function moveFieldPost(postId: string, x: number, y: number) {
@@ -941,11 +974,21 @@ function App() {
       sourceId: pixelClientIdRef.current,
       cell: nextCell,
     } satisfies PixelSyncMessage);
+    dispatchSharedAction({
+      type: "pixel.paint",
+      actorId: activeUserId,
+      actor: activeUser,
+      x: nextCell.x,
+      y: nextCell.y,
+      color: nextCell.color,
+    });
   }
 
   const react = useCallback((postId: string, amount = 1) => {
     const reactionAmount = Math.max(0, Math.floor(amount));
     if (reactionAmount === 0) return;
+    const actorId = latestSocialStateRef.current.activeUserId;
+    const actor = latestSocialStateRef.current.users.find((user) => user.id === actorId);
 
     setState((current) => {
       const targetPost = current.posts.find((post) => post.id === postId);
@@ -964,13 +1007,21 @@ function App() {
         }),
       };
     });
-  }, []);
+    dispatchSharedAction({
+      type: "post.react",
+      actorId,
+      actor,
+      postId,
+      amount: reactionAmount,
+    });
+  }, [dispatchSharedAction]);
 
   const recordPostView = useCallback((postId: string) => {
     const current = latestSocialStateRef.current;
     const targetPost = current.posts.find((post) => post.id === postId);
     if (!targetPost || !getPostSettings(targetPost).views) return;
     const viewerId = current.activeUserId;
+    const actor = current.users.find((user) => user.id === viewerId);
     const key = `${viewerId}:${postId}`;
     if (viewedPostKeysRef.current.has(key)) return;
     viewedPostKeysRef.current.add(key);
@@ -991,7 +1042,13 @@ function App() {
         };
       }),
     }));
-  }, []);
+    dispatchSharedAction({
+      type: "post.view",
+      actorId: viewerId,
+      actor,
+      postId,
+    });
+  }, [dispatchSharedAction]);
 
   function addComment(postId: string, parentId: string | undefined, text: string, attachments: MediaAttachment[]) {
     if (!activeUser || (!text.trim() && attachments.length === 0)) return;

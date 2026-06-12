@@ -5,6 +5,7 @@ import { basename, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   createSharedStateStore,
+  createSocialStateActionHandler,
   createSocialStateEventsHandler,
   createSocialStateHandler,
   resolveDataPath,
@@ -23,6 +24,7 @@ const port = Number(process.env.PORT ?? 4173);
 const store = createSharedStateStore();
 const handleSocialState = createSocialStateHandler(store);
 const handleSocialStateEvents = createSocialStateEventsHandler(store);
+const handleSocialStateAction = createSocialStateActionHandler(store);
 const handleAuth = createAuthHandler();
 
 const contentTypes = new Map([
@@ -58,6 +60,11 @@ const server = createServer(async (request, response) => {
 
   if (url.pathname === "/api/social-state/events") {
     await handleSocialStateEvents(request, response);
+    return;
+  }
+
+  if (url.pathname === "/api/social-state/actions") {
+    await handleSocialStateAction(request, response);
     return;
   }
 
