@@ -565,13 +565,17 @@ function applyReactCommentAction(state, action, actorId) {
 
 function applyUpdateCommentAction(state, action, actorId) {
   const commentId = normalizeActionId(action.commentId);
+  const targetComment = state.comments.find((comment) => comment.id === commentId);
+  if (!targetComment) throw new ActionRejectedError(404, "Comment not found");
+  if (targetComment.authorId !== actorId) throw new ActionRejectedError(403, "Cannot edit comment");
+
   const nextText = typeof action.text === "string" ? action.text.trim().slice(0, 3000) : "";
   if (!nextText) throw new ActionRejectedError(400, "Missing comment text");
 
   return {
     ...state,
     comments: state.comments.map((comment) =>
-      comment.id === commentId && comment.authorId === actorId
+      comment.id === commentId
         ? { ...comment, text: nextText, editedAt: Date.now() }
         : comment,
     ),
@@ -605,6 +609,7 @@ function applyDeleteCommentAction(state, action, actorId) {
 function applyToggleChecklistAction(state, action, actorId) {
   const postId = normalizeActionId(action.postId);
   const itemId = normalizeActionId(action.itemId);
+  if (!state.posts.some((post) => post.id === postId)) throw new ActionRejectedError(404, "Post not found");
 
   return {
     ...state,
@@ -631,6 +636,7 @@ function applyToggleChecklistAction(state, action, actorId) {
 function applyVotePollAction(state, action, actorId) {
   const postId = normalizeActionId(action.postId);
   const optionId = normalizeActionId(action.optionId);
+  if (!state.posts.some((post) => post.id === postId)) throw new ActionRejectedError(404, "Post not found");
 
   return {
     ...state,
@@ -710,8 +716,13 @@ function applyCreateConnectionAction(state, action, actorId) {
   const fromPostId = normalizeActionId(connection.fromPostId);
   const toPostId = normalizeActionId(connection.toPostId);
   if (!fromPostId || !toPostId || fromPostId === toPostId) throw new ActionRejectedError(400, "Invalid connection");
-  if (!state.posts.some((post) => post.id === fromPostId) || !state.posts.some((post) => post.id === toPostId)) {
+  const fromPost = state.posts.find((post) => post.id === fromPostId);
+  const toPost = state.posts.find((post) => post.id === toPostId);
+  if (!fromPost || !toPost) {
     throw new ActionRejectedError(404, "Post not found");
+  }
+  if (!canMovePost(fromPost, state.walls, actorId) || !canMovePost(toPost, state.walls, actorId)) {
+    throw new ActionRejectedError(403, "Cannot create connection");
   }
   if (state.postConnections.some((item) => item.fromPostId === fromPostId && item.toPostId === toPostId)) return state;
 

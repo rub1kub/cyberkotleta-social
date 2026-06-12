@@ -265,12 +265,30 @@ try {
   });
   assert(actionCommentUpdate.state.comments.find((comment) => comment.id === "action-smoke-comment")?.text === "edited", "comment.update action did not persist");
 
+  await expectActionStatus(port, 403, {
+    type: "comment.update",
+    actorId: "rub1kub",
+    commentId: "action-smoke-comment",
+    text: "not yours",
+  });
+
+  await expectActionStatus(port, 403, {
+    type: "connection.create",
+    actorId: "guest",
+    connection: {
+      id: "forbidden-smoke-connection",
+      fromPostId: "action-smoke-post",
+      toPostId: "minecraft-download-post",
+      createdAt: Date.now(),
+    },
+  });
+
   const actionConnection = await fetchJson(`http://127.0.0.1:${port}/api/social-state/actions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       type: "connection.create",
-      actorId: "guest",
+      actorId: "rub1kub",
       connection: {
         id: "action-smoke-connection",
         fromPostId: "action-smoke-post",
@@ -284,7 +302,7 @@ try {
   const actionConnectionDelete = await fetchJson(`http://127.0.0.1:${port}/api/social-state/actions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ type: "connection.delete", actorId: "guest", connectionId: "action-smoke-connection" }),
+    body: JSON.stringify({ type: "connection.delete", actorId: "rub1kub", connectionId: "action-smoke-connection" }),
   });
   assert(!actionConnectionDelete.state.postConnections.some((connection) => connection.id === "action-smoke-connection"), "connection.delete action did not persist");
 
@@ -425,6 +443,15 @@ async function fetchText(url) {
   const response = await fetch(url);
   assert(response.ok, `${url} returned ${response.status}`);
   return response.text();
+}
+
+async function expectActionStatus(targetPort, status, action) {
+  const response = await fetch(`http://127.0.0.1:${targetPort}/api/social-state/actions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(action),
+  });
+  assert(response.status === status, `${action.type} expected ${status}, got ${response.status}`);
 }
 
 async function readFirstStreamEvent(response) {
