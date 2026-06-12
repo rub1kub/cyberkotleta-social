@@ -5650,6 +5650,13 @@ body {
   gap: 10px;
 }
 
+.invite-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .invite-settings button {
   height: 30px;
   border: 1px solid var(--line);

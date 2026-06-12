@@ -4887,9 +4887,14 @@ function WallSettingsDialog({
           <div className="invite-settings">
             <div>
               <span>Ссылка доступа</span>
-              <button type="button" onClick={() => setInviteCode(createWallInviteCode())}>
-                Обновить
-              </button>
+              <div className="invite-actions">
+                <button type="button" onClick={() => navigator.clipboard?.writeText(getWallInvitePreview(wall.id, inviteCode))}>
+                  Копировать
+                </button>
+                <button type="button" onClick={() => setInviteCode(createWallInviteCode())}>
+                  Обновить
+                </button>
+              </div>
             </div>
             <input value={inviteCode} onChange={(event) => setInviteCode(event.target.value)} />
             <div className="invite-grid">
