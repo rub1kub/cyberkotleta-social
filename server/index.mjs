@@ -118,6 +118,10 @@ async function serveStatic(pathname, response) {
 
   const filePath = await resolveExistingFile(requestedPath);
   if (!filePath) {
+    if (requestedPath.startsWith(assetsDir)) {
+      sendText(response, 404, "Asset not found");
+      return;
+    }
     await streamFile(resolve(distDir, "index.html"), response, false);
     return;
   }

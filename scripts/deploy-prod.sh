@@ -16,6 +16,10 @@ fi
 
 npm run check
 
+rsync -az -e "${RSYNC_SSH}" server/ "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/server/"
+
+rsync -az -e "${RSYNC_SSH}" package.json package-lock.json "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/"
+
 # Do not delete old hashed assets on every deploy: users with an already-open tab
 # may still request the previous JS/CSS file during reload.
 rsync -az -e "${RSYNC_SSH}" dist/ "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/dist/"

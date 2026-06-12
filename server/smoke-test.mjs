@@ -464,6 +464,9 @@ try {
   const fallbackHtml = await fetchText(`http://127.0.0.1:${port}/feed`);
   assert(fallbackHtml.includes("<!doctype html>"), "SPA fallback did not serve dist index");
 
+  const missingAsset = await fetch(`http://127.0.0.1:${port}/assets/missing-build-file.js`);
+  assert(missingAsset.status === 404, "missing hashed asset should not receive SPA fallback HTML");
+
   console.log("production server smoke: ok");
 } finally {
   server.kill("SIGTERM");
