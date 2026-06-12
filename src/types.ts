@@ -181,6 +181,7 @@ export type WallActionButton = {
 
 export type Follow = {
   id: string;
+  userId: string;
   targetId: string;
   targetType: "user" | "wall";
   createdAt: number;
@@ -228,6 +229,10 @@ export type SocialState = {
   utilityPositions: Record<string, PostPosition>;
   postConnections: PostConnection[];
   follows: Follow[];
+  savedPostIdsByUser: Record<string, string[]>;
+  pinnedPostIdsByUser: Record<string, string[]>;
+  hiddenPostIdsByUser: Record<string, string[]>;
+  hiddenCommentIdsByUser: Record<string, string[]>;
   savedPostIds: string[];
   pinnedPostIds: string[];
   hiddenPostIds: string[];

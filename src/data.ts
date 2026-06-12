@@ -110,17 +110,23 @@ export const initialState: SocialState = {
   follows: [
     {
       id: "follow-1",
+      userId: "guest",
       targetId: "kotleta",
       targetType: "user",
       createdAt: now - 1000 * 60 * 60 * 5,
     },
     {
       id: "follow-2",
+      userId: "guest",
       targetId: "main",
       targetType: "wall",
       createdAt: now - 1000 * 60 * 60 * 3,
     },
   ],
+  savedPostIdsByUser: {},
+  pinnedPostIdsByUser: {},
+  hiddenPostIdsByUser: {},
+  hiddenCommentIdsByUser: {},
   savedPostIds: [],
   pinnedPostIds: [],
   hiddenPostIds: [],

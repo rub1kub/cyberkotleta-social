@@ -366,9 +366,13 @@ function App() {
     () => new Map(state.posts.map((post) => [post.id, post])),
     [state.posts],
   );
+  const scopedUserId = state.activeUserId;
+  const hiddenCommentIds = useMemo(
+    () => new Set(getScopedIdList(state.hiddenCommentIdsByUser, scopedUserId)),
+    [scopedUserId, state.hiddenCommentIdsByUser],
+  );
   const commentsByPostId = useMemo(() => {
     const map = new Map<string, Comment[]>();
-    const hiddenCommentIds = new Set(state.hiddenCommentIds);
     for (const comment of state.comments) {
       if (hiddenCommentIds.has(comment.id)) continue;
       const comments = map.get(comment.postId) ?? [];
@@ -381,7 +385,7 @@ function App() {
     }
 
     return map;
-  }, [state.comments, state.hiddenCommentIds]);
+  }, [hiddenCommentIds, state.comments]);
   const activeUser = userById.get(state.activeUserId) ?? userById.get(getAnonymousGuestUser().id) ?? userById.get(guestUserId);
   const isDiscordUser = activeUser?.provider === "discord";
   const spaces = useMemo(() => state.walls.filter(isSpaceWall), [state.walls]);
@@ -389,16 +393,25 @@ function App() {
     () => new Map(state.walls.map((wall) => [wall.id, wall])),
     [state.walls],
   );
-  const savedPostIds = useMemo(() => new Set(state.savedPostIds), [state.savedPostIds]);
-  const pinnedPostIds = useMemo(() => new Set(state.pinnedPostIds), [state.pinnedPostIds]);
-  const hiddenPostIds = useMemo(() => new Set(state.hiddenPostIds), [state.hiddenPostIds]);
+  const savedPostIds = useMemo(
+    () => new Set(getScopedIdList(state.savedPostIdsByUser, scopedUserId)),
+    [scopedUserId, state.savedPostIdsByUser],
+  );
+  const pinnedPostIds = useMemo(
+    () => new Set(getScopedIdList(state.pinnedPostIdsByUser, scopedUserId)),
+    [scopedUserId, state.pinnedPostIdsByUser],
+  );
+  const hiddenPostIds = useMemo(
+    () => new Set(getScopedIdList(state.hiddenPostIdsByUser, scopedUserId)),
+    [scopedUserId, state.hiddenPostIdsByUser],
+  );
   const followedUserIds = useMemo(
-    () => new Set(state.follows.filter((follow) => follow.targetType === "user").map((follow) => follow.targetId)),
-    [state.follows],
+    () => new Set(state.follows.filter((follow) => follow.userId === scopedUserId && follow.targetType === "user").map((follow) => follow.targetId)),
+    [scopedUserId, state.follows],
   );
   const followedWallIds = useMemo(
-    () => new Set(state.follows.filter((follow) => follow.targetType === "wall").map((follow) => follow.targetId)),
-    [state.follows],
+    () => new Set(state.follows.filter((follow) => follow.userId === scopedUserId && follow.targetType === "wall").map((follow) => follow.targetId)),
+    [scopedUserId, state.follows],
   );
   const activeInviteCode = useMemo(
     () => new URLSearchParams(window.location.search).get("invite") ?? "",
@@ -1154,6 +1167,7 @@ function App() {
         ...current,
         comments: current.comments.filter((comment) => !idsToDelete.has(comment.id)),
         hiddenCommentIds: current.hiddenCommentIds.filter((id) => !idsToDelete.has(id)),
+        hiddenCommentIdsByUser: removeScopedIds(current.hiddenCommentIdsByUser, idsToDelete),
         reports: current.reports.filter((report) => !report.commentId || !idsToDelete.has(report.commentId)),
       };
     });
@@ -1170,9 +1184,7 @@ function App() {
   function hideComment(commentId: string) {
     setState((current) => ({
       ...current,
-      hiddenCommentIds: current.hiddenCommentIds.includes(commentId)
-        ? current.hiddenCommentIds
-        : [commentId, ...current.hiddenCommentIds],
+      hiddenCommentIdsByUser: addScopedId(current.hiddenCommentIdsByUser, current.activeUserId, commentId),
     }));
   }
 
@@ -1191,9 +1203,7 @@ function App() {
         },
         ...current.reports,
       ],
-      hiddenCommentIds: current.hiddenCommentIds.includes(commentId)
-        ? current.hiddenCommentIds
-        : [commentId, ...current.hiddenCommentIds],
+      hiddenCommentIdsByUser: addScopedId(current.hiddenCommentIdsByUser, current.activeUserId, commentId),
     }));
   }
 
@@ -1242,6 +1252,13 @@ function App() {
       hiddenCommentIds: current.hiddenCommentIds.filter(
         (id) => current.comments.some((comment) => comment.id === id && comment.postId !== postId),
       ),
+      savedPostIdsByUser: removeScopedIds(current.savedPostIdsByUser, new Set([postId])),
+      pinnedPostIdsByUser: removeScopedIds(current.pinnedPostIdsByUser, new Set([postId])),
+      hiddenPostIdsByUser: removeScopedIds(current.hiddenPostIdsByUser, new Set([postId])),
+      hiddenCommentIdsByUser: removeScopedIds(
+        current.hiddenCommentIdsByUser,
+        new Set(current.comments.filter((comment) => comment.postId === postId).map((comment) => comment.id)),
+      ),
     }));
     if (route.view === "post" && route.postId === postId) {
       navigate({ view: "feed" });
@@ -1263,9 +1280,7 @@ function App() {
 
       return {
         ...current,
-        pinnedPostIds: current.pinnedPostIds.includes(postId)
-          ? current.pinnedPostIds.filter((id) => id !== postId)
-          : [postId, ...current.pinnedPostIds],
+        pinnedPostIdsByUser: toggleScopedId(current.pinnedPostIdsByUser, current.activeUserId, postId),
       };
     });
   }
@@ -1274,11 +1289,9 @@ function App() {
     if (!activeUser) return;
     setState((current) => ({
       ...current,
-      savedPostIds: !getPostSettings(current.posts.find((post) => post.id === postId)).saves
-        ? current.savedPostIds
-        : current.savedPostIds.includes(postId)
-        ? current.savedPostIds.filter((id) => id !== postId)
-        : [postId, ...current.savedPostIds],
+      savedPostIdsByUser: !getPostSettings(current.posts.find((post) => post.id === postId)).saves
+        ? current.savedPostIdsByUser
+        : toggleScopedId(current.savedPostIdsByUser, current.activeUserId, postId),
     }));
     dispatchSharedAction({
       type: "post.save.toggle",
@@ -1502,14 +1515,14 @@ function App() {
         },
         ...current.reports,
       ],
-      hiddenPostIds: current.hiddenPostIds.includes(postId) ? current.hiddenPostIds : [postId, ...current.hiddenPostIds],
+      hiddenPostIdsByUser: addScopedId(current.hiddenPostIdsByUser, current.activeUserId, postId),
     }));
   }
 
   function hidePost(postId: string) {
     setState((current) => ({
       ...current,
-      hiddenPostIds: current.hiddenPostIds.includes(postId) ? current.hiddenPostIds : [postId, ...current.hiddenPostIds],
+      hiddenPostIdsByUser: addScopedId(current.hiddenPostIdsByUser, current.activeUserId, postId),
     }));
   }
 
@@ -1517,7 +1530,9 @@ function App() {
     if (!activeUser) return;
 
     setState((current) => {
-      const existing = current.follows.find((follow) => follow.targetType === targetType && follow.targetId === targetId);
+      const existing = current.follows.find(
+        (follow) => follow.userId === current.activeUserId && follow.targetType === targetType && follow.targetId === targetId,
+      );
       if (existing) {
         return {
           ...current,
@@ -1530,6 +1545,7 @@ function App() {
         follows: [
           {
             id: crypto.randomUUID(),
+            userId: current.activeUserId,
             targetId,
             targetType,
             createdAt: Date.now(),
@@ -1609,6 +1625,10 @@ function App() {
         pinnedPostIds: current.pinnedPostIds.filter((postId) => !postIds.has(postId)),
         hiddenPostIds: current.hiddenPostIds.filter((postId) => !postIds.has(postId)),
         hiddenCommentIds: current.hiddenCommentIds.filter((commentId) => !commentIds.has(commentId)),
+        savedPostIdsByUser: removeScopedIds(current.savedPostIdsByUser, postIds),
+        pinnedPostIdsByUser: removeScopedIds(current.pinnedPostIdsByUser, postIds),
+        hiddenPostIdsByUser: removeScopedIds(current.hiddenPostIdsByUser, postIds),
+        hiddenCommentIdsByUser: removeScopedIds(current.hiddenCommentIdsByUser, commentIds),
         notifications: current.notifications.filter(
           (item) => !item.postId || !postIds.has(item.postId),
         ),
@@ -7277,6 +7297,40 @@ function writePinnedWalls(pinned: PinnedWallState): void {
   } catch {
     // Pinned boards are a personal navigation preference.
   }
+}
+
+function getScopedIdList(scoped: Record<string, string[]> | undefined, userId: string): string[] {
+  return scoped?.[userId] ?? [];
+}
+
+function toggleScopedId(scoped: Record<string, string[]>, userId: string, id: string): Record<string, string[]> {
+  const currentIds = scoped[userId] ?? [];
+  const nextIds = currentIds.includes(id)
+    ? currentIds.filter((item) => item !== id)
+    : [id, ...currentIds];
+
+  return {
+    ...scoped,
+    [userId]: nextIds,
+  };
+}
+
+function addScopedId(scoped: Record<string, string[]>, userId: string, id: string): Record<string, string[]> {
+  const currentIds = scoped[userId] ?? [];
+  if (currentIds.includes(id)) return scoped;
+
+  return {
+    ...scoped,
+    [userId]: [id, ...currentIds],
+  };
+}
+
+function removeScopedIds(scoped: Record<string, string[]>, idsToRemove: Set<string>): Record<string, string[]> {
+  return Object.fromEntries(
+    Object.entries(scoped)
+      .map(([userId, ids]) => [userId, ids.filter((id) => !idsToRemove.has(id))])
+      .filter(([, ids]) => ids.length > 0),
+  );
 }
 
 function normalizeFieldLayoutPosition(value: unknown): PostPosition | null {

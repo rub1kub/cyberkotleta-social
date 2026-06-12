@@ -272,7 +272,8 @@ try {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ type: "post.save.toggle", actorId: "guest", postId: "action-smoke-post" }),
   });
-  assert(actionSave.state.savedPostIds.includes("action-smoke-post"), "post.save.toggle action did not persist");
+  assert(actionSave.state.savedPostIdsByUser.guest?.includes("action-smoke-post"), "post.save.toggle action did not persist for actor");
+  assert(!actionSave.state.savedPostIdsByUser.rub1kub?.includes("action-smoke-post"), "post.save.toggle leaked to another user");
 
   const actionRepost = await fetchJson(`http://127.0.0.1:${port}/api/social-state/actions`, {
     method: "POST",
@@ -286,7 +287,8 @@ try {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ type: "follow.toggle", actorId: "guest", targetType: "user", targetId: "rub1kub" }),
   });
-  assert(actionFollow.state.follows.some((follow) => follow.targetType === "user" && follow.targetId === "rub1kub"), "follow.toggle action did not persist");
+  assert(actionFollow.state.follows.some((follow) => follow.userId === "guest" && follow.targetType === "user" && follow.targetId === "rub1kub"), "follow.toggle action did not persist for actor");
+  assert(!actionFollow.state.follows.some((follow) => follow.userId === "rub1kub" && follow.targetType === "user" && follow.targetId === "rub1kub"), "follow.toggle leaked to another user");
 
   const actionWall = await fetchJson(`http://127.0.0.1:${port}/api/social-state/actions`, {
     method: "POST",

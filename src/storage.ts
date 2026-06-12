@@ -96,13 +96,17 @@ export function sanitizeSocialState(state: SocialState): SocialState {
   const postConnections = normalizeArray<PostConnection>(state.postConnections)
     .map((connection) => normalizePostConnection(connection, postIds, userIds))
     .filter(Boolean) as PostConnection[];
+  const fallbackUserId = userIds.has(state.activeUserId) ? state.activeUserId : users[0].id;
   const follows = normalizeArray<Follow>(state.follows)
-    .filter((follow) => follow.targetType === "user" ? userIds.has(follow.targetId) : wallIds.has(follow.targetId))
-    .map((follow) => ({ ...follow, createdAt: Number(follow.createdAt) || Date.now() }));
+    .flatMap((follow) => normalizeFollow(follow, userIds, wallIds, fallbackUserId));
   const savedPostIds = normalizeStringArray(state.savedPostIds).filter((postId) => postIds.has(postId));
   const pinnedPostIds = normalizeStringArray(state.pinnedPostIds).filter((postId) => postIds.has(postId));
   const hiddenPostIds = normalizeStringArray(state.hiddenPostIds).filter((postId) => postIds.has(postId));
   const hiddenCommentIds = normalizeStringArray(state.hiddenCommentIds).filter((commentId) => commentIds.has(commentId));
+  const savedPostIdsByUser = normalizeUserScopedIdLists(state.savedPostIdsByUser, savedPostIds, postIds, userIds, fallbackUserId);
+  const pinnedPostIdsByUser = normalizeUserScopedIdLists(state.pinnedPostIdsByUser, pinnedPostIds, postIds, userIds, fallbackUserId);
+  const hiddenPostIdsByUser = normalizeUserScopedIdLists(state.hiddenPostIdsByUser, hiddenPostIds, postIds, userIds, fallbackUserId);
+  const hiddenCommentIdsByUser = normalizeUserScopedIdLists(state.hiddenCommentIdsByUser, hiddenCommentIds, commentIds, userIds, fallbackUserId);
   const pixelCells = normalizeArray<PixelCell>(state.pixelCells)
     .map(normalizePixelCell)
     .filter(Boolean)
@@ -133,6 +137,10 @@ export function sanitizeSocialState(state: SocialState): SocialState {
     },
     postConnections,
     follows,
+    savedPostIdsByUser,
+    pinnedPostIdsByUser,
+    hiddenPostIdsByUser,
+    hiddenCommentIdsByUser,
     savedPostIds,
     pinnedPostIds,
     hiddenPostIds,
@@ -528,6 +536,49 @@ function normalizeComment(comment: Comment): Comment {
 
 function normalizeArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? value as T[] : [];
+}
+
+function normalizeFollow(
+  follow: Follow,
+  userIds: Set<string>,
+  wallIds: Set<string>,
+  fallbackUserId: string,
+): Follow[] {
+  const userId = typeof follow.userId === "string" && userIds.has(follow.userId) ? follow.userId : fallbackUserId;
+  const targetType = follow.targetType === "wall" ? "wall" : "user";
+  const targetId = typeof follow.targetId === "string" ? follow.targetId : "";
+  if (targetType === "user" ? !userIds.has(targetId) : !wallIds.has(targetId)) return [];
+
+  return [{
+    id: typeof follow.id === "string" && follow.id ? follow.id : crypto.randomUUID(),
+    userId,
+    targetId,
+    targetType,
+    createdAt: Number(follow.createdAt) || Date.now(),
+  }];
+}
+
+function normalizeUserScopedIdLists(
+  value: unknown,
+  legacyIds: string[],
+  allowedIds: Set<string>,
+  userIds: Set<string>,
+  fallbackUserId: string,
+): Record<string, string[]> {
+  const scoped: Record<string, string[]> = {};
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    for (const [userId, ids] of Object.entries(value as Record<string, unknown>)) {
+      if (!userIds.has(userId) || !Array.isArray(ids)) continue;
+      const normalizedIds = Array.from(new Set(ids.filter((id): id is string => typeof id === "string" && allowedIds.has(id))));
+      if (normalizedIds.length > 0) scoped[userId] = normalizedIds;
+    }
+  }
+
+  if (Object.keys(scoped).length === 0 && legacyIds.length > 0) {
+    scoped[fallbackUserId] = Array.from(new Set(legacyIds));
+  }
+
+  return scoped;
 }
 
 function normalizeStringArray(value: unknown): string[] {

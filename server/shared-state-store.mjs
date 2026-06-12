@@ -224,7 +224,7 @@ function applySocialStateAction(state, action) {
     case "post.delete":
       return applyDeletePostAction(withActor, action, actorId);
     case "post.save.toggle":
-      return applyToggleSavedPostAction(withActor, action);
+      return applyToggleSavedPostAction(withActor, action, actorId);
     case "post.repost":
       return applyRepostAction(withActor, action, actorId);
     case "comment.create":
@@ -414,22 +414,26 @@ function applyDeletePostAction(state, action, actorId) {
     pinnedPostIds: state.pinnedPostIds.filter((id) => id !== postId),
     hiddenPostIds: state.hiddenPostIds.filter((id) => id !== postId),
     hiddenCommentIds: state.hiddenCommentIds.filter((id) => !commentIds.has(id)),
+    savedPostIdsByUser: removeIdsFromUserScopedIdLists(state.savedPostIdsByUser, new Set([postId])),
+    pinnedPostIdsByUser: removeIdsFromUserScopedIdLists(state.pinnedPostIdsByUser, new Set([postId])),
+    hiddenPostIdsByUser: removeIdsFromUserScopedIdLists(state.hiddenPostIdsByUser, new Set([postId])),
+    hiddenCommentIdsByUser: removeIdsFromUserScopedIdLists(state.hiddenCommentIdsByUser, commentIds),
     notifications: state.notifications.filter((item) => item.postId !== postId),
     reports: state.reports.filter((report) => report.postId !== postId && (!report.commentId || !commentIds.has(report.commentId))),
   };
 }
 
-function applyToggleSavedPostAction(state, action) {
+function applyToggleSavedPostAction(state, action, actorId) {
   const postId = normalizeActionId(action.postId);
   const targetPost = state.posts.find((post) => post.id === postId);
   if (!targetPost) throw new ActionRejectedError(404, "Post not found");
   if (getPostSettings(targetPost).saves === false) return state;
+  const savedPostIdsByUser = toggleUserScopedId(state.savedPostIdsByUser, actorId, postId);
 
   return {
     ...state,
-    savedPostIds: state.savedPostIds.includes(postId)
-      ? state.savedPostIds.filter((id) => id !== postId)
-      : [postId, ...state.savedPostIds],
+    savedPostIdsByUser,
+    savedPostIds: savedPostIdsByUser[actorId] ?? [],
   };
 }
 
@@ -568,6 +572,7 @@ function applyDeleteCommentAction(state, action, actorId) {
     ...state,
     comments: state.comments.filter((comment) => !idsToDelete.has(comment.id)),
     hiddenCommentIds: state.hiddenCommentIds.filter((id) => !idsToDelete.has(id)),
+    hiddenCommentIdsByUser: removeIdsFromUserScopedIdLists(state.hiddenCommentIdsByUser, idsToDelete),
     reports: state.reports.filter((report) => !report.commentId || !idsToDelete.has(report.commentId)),
   };
 }
@@ -650,7 +655,7 @@ function applyToggleFollowAction(state, action, actorId) {
   if (targetType === "wall" && !state.walls.some((wall) => wall.id === targetId)) throw new ActionRejectedError(404, "Wall not found");
   if (targetType === "user" && !state.users.some((user) => user.id === targetId)) throw new ActionRejectedError(404, "User not found");
 
-  const existing = state.follows.find((follow) => follow.targetType === targetType && follow.targetId === targetId);
+  const existing = state.follows.find((follow) => follow.userId === actorId && follow.targetType === targetType && follow.targetId === targetId);
   if (existing) {
     return {
       ...state,
@@ -663,6 +668,7 @@ function applyToggleFollowAction(state, action, actorId) {
     follows: [
       {
         id: randomUUID(),
+        userId: actorId,
         targetId,
         targetType,
         createdAt: Date.now(),
@@ -781,6 +787,10 @@ function applyDeleteWallAction(state, action, actorId) {
     pinnedPostIds: state.pinnedPostIds.filter((postId) => !postIds.has(postId)),
     hiddenPostIds: state.hiddenPostIds.filter((postId) => !postIds.has(postId)),
     hiddenCommentIds: state.hiddenCommentIds.filter((commentId) => !commentIds.has(commentId)),
+    savedPostIdsByUser: removeIdsFromUserScopedIdLists(state.savedPostIdsByUser, postIds),
+    pinnedPostIdsByUser: removeIdsFromUserScopedIdLists(state.pinnedPostIdsByUser, postIds),
+    hiddenPostIdsByUser: removeIdsFromUserScopedIdLists(state.hiddenPostIdsByUser, postIds),
+    hiddenCommentIdsByUser: removeIdsFromUserScopedIdLists(state.hiddenCommentIdsByUser, commentIds),
     notifications: state.notifications.filter((item) => !item.postId || !postIds.has(item.postId)),
     reports: state.reports.filter((report) => {
       if (report.postId && postIds.has(report.postId)) return false;
@@ -1157,6 +1167,11 @@ function sanitizeSocialState(state) {
   const comments = normalizeComments(state?.comments, fallback.comments, postIds, userIds);
   const pixelCells = normalizePixelCells(state?.pixelCells, userIds);
   const postConnections = normalizePostConnections(state?.postConnections, postIds, userIds);
+  const fallbackUserId = userIds.has(state?.activeUserId) ? state.activeUserId : "guest";
+  const savedPostIds = normalizeIdList(state?.savedPostIds, postIds);
+  const pinnedPostIds = normalizeIdList(state?.pinnedPostIds, postIds);
+  const hiddenPostIds = normalizeIdList(state?.hiddenPostIds, postIds);
+  const hiddenCommentIds = normalizeIdList(state?.hiddenCommentIds, new Set(comments.map((comment) => comment.id)));
 
   return {
     siteSections: fallback.siteSections,
@@ -1170,11 +1185,15 @@ function sanitizeSocialState(state) {
       ...normalizeUtilityPositions(fallback.utilityPositions),
       ...normalizeUtilityPositions(state?.utilityPositions),
     },
-    follows: Array.isArray(state?.follows) ? state.follows : fallback.follows,
-    savedPostIds: normalizeIdList(state?.savedPostIds, postIds),
-    pinnedPostIds: normalizeIdList(state?.pinnedPostIds, postIds),
-    hiddenPostIds: normalizeIdList(state?.hiddenPostIds, postIds),
-    hiddenCommentIds: normalizeIdList(state?.hiddenCommentIds, new Set(comments.map((comment) => comment.id))),
+    follows: normalizeFollows(state?.follows, fallback.follows, userIds, wallIds, fallbackUserId),
+    savedPostIdsByUser: normalizeUserScopedIdLists(state?.savedPostIdsByUser, savedPostIds, postIds, userIds, fallbackUserId),
+    pinnedPostIdsByUser: normalizeUserScopedIdLists(state?.pinnedPostIdsByUser, pinnedPostIds, postIds, userIds, fallbackUserId),
+    hiddenPostIdsByUser: normalizeUserScopedIdLists(state?.hiddenPostIdsByUser, hiddenPostIds, postIds, userIds, fallbackUserId),
+    hiddenCommentIdsByUser: normalizeUserScopedIdLists(state?.hiddenCommentIdsByUser, hiddenCommentIds, new Set(comments.map((comment) => comment.id)), userIds, fallbackUserId),
+    savedPostIds,
+    pinnedPostIds,
+    hiddenPostIds,
+    hiddenCommentIds,
     notifications: Array.isArray(state?.notifications) ? state.notifications : fallback.notifications,
     pixelCells,
     pixelCooldowns: normalizePixelCooldowns(state?.pixelCooldowns, userIds),
@@ -1558,6 +1577,71 @@ function normalizeUtilityPositions(value) {
 function normalizeIdList(value, allowedIds) {
   if (!Array.isArray(value)) return [];
   return value.filter((id) => typeof id === "string" && allowedIds.has(id));
+}
+
+function normalizeFollows(value, fallback, userIds, wallIds, fallbackUserId) {
+  const follows = Array.isArray(value) ? value : fallback;
+  const seen = new Set();
+
+  return follows.flatMap((follow) => {
+    const targetType = follow?.targetType === "wall" ? "wall" : "user";
+    const targetId = typeof follow?.targetId === "string" ? follow.targetId : "";
+    if (targetType === "user" ? !userIds.has(targetId) : !wallIds.has(targetId)) return [];
+
+    const userId = typeof follow?.userId === "string" && userIds.has(follow.userId) ? follow.userId : fallbackUserId;
+    const key = `${userId}:${targetType}:${targetId}`;
+    if (seen.has(key)) return [];
+    seen.add(key);
+
+    return [{
+      id: typeof follow?.id === "string" && follow.id ? follow.id : randomUUID(),
+      userId,
+      targetId,
+      targetType,
+      createdAt: Number(follow?.createdAt) || Date.now(),
+    }];
+  });
+}
+
+function normalizeUserScopedIdLists(value, legacyIds, allowedIds, userIds, fallbackUserId) {
+  const scoped = {};
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    for (const [userId, ids] of Object.entries(value)) {
+      if (!userIds.has(userId) || !Array.isArray(ids)) continue;
+      const normalizedIds = Array.from(new Set(ids.filter((id) => typeof id === "string" && allowedIds.has(id))));
+      if (normalizedIds.length > 0) scoped[userId] = normalizedIds;
+    }
+  }
+
+  if (Object.keys(scoped).length === 0 && legacyIds.length > 0) {
+    scoped[fallbackUserId] = Array.from(new Set(legacyIds));
+  }
+
+  return scoped;
+}
+
+function toggleUserScopedId(scoped, userId, itemId) {
+  const currentIds = Array.isArray(scoped?.[userId]) ? scoped[userId] : [];
+  const nextIds = currentIds.includes(itemId)
+    ? currentIds.filter((id) => id !== itemId)
+    : [itemId, ...currentIds];
+
+  return {
+    ...(scoped && typeof scoped === "object" && !Array.isArray(scoped) ? scoped : {}),
+    [userId]: nextIds,
+  };
+}
+
+function removeIdsFromUserScopedIdLists(scoped, idsToRemove) {
+  if (!scoped || typeof scoped !== "object" || Array.isArray(scoped)) return {};
+  return Object.fromEntries(
+    Object.entries(scoped)
+      .map(([userId, ids]) => [
+        userId,
+        Array.isArray(ids) ? ids.filter((id) => typeof id === "string" && !idsToRemove.has(id)) : [],
+      ])
+      .filter(([, ids]) => ids.length > 0),
+  );
 }
 
 function normalizePixelCells(value, userIds) {
