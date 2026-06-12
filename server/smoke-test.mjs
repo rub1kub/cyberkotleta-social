@@ -177,6 +177,156 @@ try {
   });
   assert(actionPixel.state.pixelCells.some((cell) => cell.x === 1 && cell.y === 2), "pixel.paint action did not persist");
 
+  const actionUpdated = await fetchJson(`http://127.0.0.1:${port}/api/social-state/actions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      type: "post.update",
+      actorId: "guest",
+      postId: "action-smoke-post",
+      text: "action smoke updated",
+      options: {
+        checklist: [{ id: "todo-1", text: "check", checkedBy: [] }],
+        poll: {
+          question: "ok?",
+          multi: false,
+          options: [
+            { id: "yes", text: "yes", voterIds: [] },
+            { id: "no", text: "no", voterIds: [] },
+          ],
+        },
+      },
+    }),
+  });
+  assert(actionUpdated.state.posts.find((post) => post.id === "action-smoke-post")?.text.includes("updated"), "post.update action did not persist");
+
+  const actionChecklist = await fetchJson(`http://127.0.0.1:${port}/api/social-state/actions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "checklist.toggle", actorId: "guest", postId: "action-smoke-post", itemId: "todo-1" }),
+  });
+  assert(actionChecklist.state.posts.find((post) => post.id === "action-smoke-post")?.checklist?.[0]?.checkedBy?.includes("guest"), "checklist.toggle action did not persist");
+
+  const actionPoll = await fetchJson(`http://127.0.0.1:${port}/api/social-state/actions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "poll.vote", actorId: "guest", postId: "action-smoke-post", optionId: "yes" }),
+  });
+  assert(actionPoll.state.posts.find((post) => post.id === "action-smoke-post")?.poll?.options?.[0]?.voterIds?.includes("guest"), "poll.vote action did not persist");
+
+  const actionComment = await fetchJson(`http://127.0.0.1:${port}/api/social-state/actions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      type: "comment.create",
+      actorId: "guest",
+      comment: {
+        id: "action-smoke-comment",
+        postId: "action-smoke-post",
+        text: "comment",
+        attachments: [],
+      },
+    }),
+  });
+  assert(actionComment.state.comments.some((comment) => comment.id === "action-smoke-comment"), "comment.create action did not persist");
+
+  const actionCommentReact = await fetchJson(`http://127.0.0.1:${port}/api/social-state/actions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "comment.react", actorId: "rub1kub", commentId: "action-smoke-comment", amount: 2 }),
+  });
+  assert(actionCommentReact.state.comments.find((comment) => comment.id === "action-smoke-comment")?.reactions === 2, "comment.react action did not persist");
+
+  const actionCommentUpdate = await fetchJson(`http://127.0.0.1:${port}/api/social-state/actions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "comment.update", actorId: "guest", commentId: "action-smoke-comment", text: "edited" }),
+  });
+  assert(actionCommentUpdate.state.comments.find((comment) => comment.id === "action-smoke-comment")?.text === "edited", "comment.update action did not persist");
+
+  const actionConnection = await fetchJson(`http://127.0.0.1:${port}/api/social-state/actions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      type: "connection.create",
+      actorId: "guest",
+      connection: {
+        id: "action-smoke-connection",
+        fromPostId: "action-smoke-post",
+        toPostId: "minecraft-download-post",
+        createdAt: Date.now(),
+      },
+    }),
+  });
+  assert(actionConnection.state.postConnections.some((connection) => connection.id === "action-smoke-connection"), "connection.create action did not persist");
+
+  const actionConnectionDelete = await fetchJson(`http://127.0.0.1:${port}/api/social-state/actions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "connection.delete", actorId: "guest", connectionId: "action-smoke-connection" }),
+  });
+  assert(!actionConnectionDelete.state.postConnections.some((connection) => connection.id === "action-smoke-connection"), "connection.delete action did not persist");
+
+  const actionSave = await fetchJson(`http://127.0.0.1:${port}/api/social-state/actions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "post.save.toggle", actorId: "guest", postId: "action-smoke-post" }),
+  });
+  assert(actionSave.state.savedPostIds.includes("action-smoke-post"), "post.save.toggle action did not persist");
+
+  const actionRepost = await fetchJson(`http://127.0.0.1:${port}/api/social-state/actions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "post.repost", actorId: "rub1kub", postId: "action-smoke-post", repostId: "action-smoke-repost" }),
+  });
+  assert(actionRepost.state.posts.some((post) => post.id === "action-smoke-repost" && post.repostOfId === "action-smoke-post"), "post.repost action did not persist");
+
+  const actionFollow = await fetchJson(`http://127.0.0.1:${port}/api/social-state/actions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "follow.toggle", actorId: "guest", targetType: "user", targetId: "rub1kub" }),
+  });
+  assert(actionFollow.state.follows.some((follow) => follow.targetType === "user" && follow.targetId === "rub1kub"), "follow.toggle action did not persist");
+
+  const actionWall = await fetchJson(`http://127.0.0.1:${port}/api/social-state/actions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      type: "wall.create",
+      actorId: "rub1kub",
+      wall: {
+        id: "space:smoke-wall",
+        siteSectionId: "space",
+        name: "Smoke wall",
+        description: "",
+        rules: "",
+        publishMode: "owner",
+      },
+    }),
+  });
+  assert(actionWall.state.walls.some((wall) => wall.id === "space:smoke-wall"), "wall.create action did not persist");
+
+  const actionWallUpdate = await fetchJson(`http://127.0.0.1:${port}/api/social-state/actions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "wall.update", actorId: "rub1kub", wallId: "space:smoke-wall", wall: { name: "Smoke updated" } }),
+  });
+  assert(actionWallUpdate.state.walls.find((wall) => wall.id === "space:smoke-wall")?.name === "Smoke updated", "wall.update action did not persist");
+
+  const actionWallDelete = await fetchJson(`http://127.0.0.1:${port}/api/social-state/actions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "wall.delete", actorId: "rub1kub", wallId: "space:smoke-wall" }),
+  });
+  assert(!actionWallDelete.state.walls.some((wall) => wall.id === "space:smoke-wall"), "wall.delete action did not persist");
+
+  const actionCommentDelete = await fetchJson(`http://127.0.0.1:${port}/api/social-state/actions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "comment.delete", actorId: "guest", commentId: "action-smoke-comment" }),
+  });
+  assert(!actionCommentDelete.state.comments.some((comment) => comment.id === "action-smoke-comment"), "comment.delete action did not persist");
+
   const rootHtml = await fetchText(`http://127.0.0.1:${port}/`);
   assert(rootHtml.includes("<!doctype html>"), "root HTML did not serve dist");
 

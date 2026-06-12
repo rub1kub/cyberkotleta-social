@@ -2,7 +2,9 @@ import { sanitizeSocialState } from "./storage";
 import type {
   MediaAttachment,
   PixelCell,
+  Comment,
   Post,
+  PostConnection,
   PostAppearance,
   PostInteractionSettings,
   PostKind,
@@ -11,6 +13,7 @@ import type {
   SketchStroke,
   SocialState,
   UserProfile,
+  Wall,
 } from "./types";
 
 const sharedStatePath = "/api/social-state";
@@ -64,6 +67,113 @@ export type SharedStateAction =
       actorId: string;
       actor?: UserProfile;
       postId: string;
+    }
+  | {
+      type: "post.update";
+      actorId: string;
+      actor?: UserProfile;
+      postId: string;
+      text: string;
+      options?: Pick<Post, "appearance" | "checklist" | "kind" | "poll" | "settings" | "sketch">;
+    }
+  | {
+      type: "post.delete";
+      actorId: string;
+      actor?: UserProfile;
+      postId: string;
+    }
+  | {
+      type: "post.save.toggle";
+      actorId: string;
+      actor?: UserProfile;
+      postId: string;
+    }
+  | {
+      type: "post.repost";
+      actorId: string;
+      actor?: UserProfile;
+      postId: string;
+      repostId: string;
+      position?: PostPosition;
+      createdAt?: number;
+    }
+  | {
+      type: "comment.create";
+      actorId: string;
+      actor?: UserProfile;
+      comment: Pick<Comment, "attachments" | "id" | "parentId" | "postId" | "text"> & { createdAt?: number };
+    }
+  | {
+      type: "comment.react";
+      actorId: string;
+      actor?: UserProfile;
+      commentId: string;
+      amount?: number;
+    }
+  | {
+      type: "comment.update";
+      actorId: string;
+      actor?: UserProfile;
+      commentId: string;
+      text: string;
+    }
+  | {
+      type: "comment.delete";
+      actorId: string;
+      actor?: UserProfile;
+      commentId: string;
+    }
+  | {
+      type: "checklist.toggle";
+      actorId: string;
+      actor?: UserProfile;
+      postId: string;
+      itemId: string;
+    }
+  | {
+      type: "poll.vote";
+      actorId: string;
+      actor?: UserProfile;
+      postId: string;
+      optionId: string;
+    }
+  | {
+      type: "follow.toggle";
+      actorId: string;
+      actor?: UserProfile;
+      targetId: string;
+      targetType: "user" | "wall";
+    }
+  | {
+      type: "connection.create";
+      actorId: string;
+      actor?: UserProfile;
+      connection: PostConnection;
+    }
+  | {
+      type: "connection.delete";
+      actorId: string;
+      actor?: UserProfile;
+      connectionId: string;
+    }
+  | {
+      type: "wall.create";
+      actorId: string;
+      actor?: UserProfile;
+      wall: Wall;
+    }
+  | {
+      type: "wall.update";
+      actorId: string;
+      actor?: UserProfile;
+      wallId: string;
+      wall: Partial<Wall>;
+    }
+  | {
+      type: "wall.delete";
+      actorId: string;
+      actor?: UserProfile;
+      wallId: string;
     }
   | {
       type: "pixel.paint";

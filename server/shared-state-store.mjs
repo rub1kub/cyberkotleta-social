@@ -219,6 +219,38 @@ function applySocialStateAction(state, action) {
       return applyReactPostAction(withActor, action, actorId);
     case "post.view":
       return applyViewPostAction(withActor, action, actorId);
+    case "post.update":
+      return applyUpdatePostAction(withActor, action, actorId);
+    case "post.delete":
+      return applyDeletePostAction(withActor, action, actorId);
+    case "post.save.toggle":
+      return applyToggleSavedPostAction(withActor, action);
+    case "post.repost":
+      return applyRepostAction(withActor, action, actorId);
+    case "comment.create":
+      return applyCreateCommentAction(withActor, action, actorId);
+    case "comment.react":
+      return applyReactCommentAction(withActor, action, actorId);
+    case "comment.update":
+      return applyUpdateCommentAction(withActor, action, actorId);
+    case "comment.delete":
+      return applyDeleteCommentAction(withActor, action, actorId);
+    case "checklist.toggle":
+      return applyToggleChecklistAction(withActor, action, actorId);
+    case "poll.vote":
+      return applyVotePollAction(withActor, action, actorId);
+    case "follow.toggle":
+      return applyToggleFollowAction(withActor, action, actorId);
+    case "connection.create":
+      return applyCreateConnectionAction(withActor, action, actorId);
+    case "connection.delete":
+      return applyDeleteConnectionAction(withActor, action, actorId);
+    case "wall.create":
+      return applyCreateWallAction(withActor, action, actorId);
+    case "wall.update":
+      return applyUpdateWallAction(withActor, action, actorId);
+    case "wall.delete":
+      return applyDeleteWallAction(withActor, action, actorId);
     case "pixel.paint":
       return applyPaintPixelAction(withActor, action, actorId);
     default:
@@ -330,6 +362,430 @@ function applyViewPostAction(state, action, actorId) {
           uniqueUserIds,
         },
       };
+    }),
+  };
+}
+
+function applyUpdatePostAction(state, action, actorId) {
+  const postId = normalizeActionId(action.postId);
+  const targetPost = state.posts.find((post) => post.id === postId);
+  if (!targetPost) throw new ActionRejectedError(404, "Post not found");
+  if (targetPost.authorId !== actorId) throw new ActionRejectedError(403, "Cannot edit post");
+
+  return sanitizeSocialState({
+    ...state,
+    posts: state.posts.map((post) =>
+      post.id === postId
+        ? {
+            ...post,
+            text: typeof action.text === "string" ? action.text.slice(0, 8000) : post.text,
+            ...(action.options?.kind ? { kind: action.options.kind } : {}),
+            ...(action.options?.appearance ? { appearance: action.options.appearance } : {}),
+            ...(action.options?.settings ? { settings: action.options.settings } : {}),
+            ...(action.options?.sketch ? { sketch: action.options.sketch } : {}),
+            ...(action.options?.checklist ? { checklist: action.options.checklist } : {}),
+            ...(Object.prototype.hasOwnProperty.call(action.options ?? {}, "poll") ? { poll: action.options?.poll } : {}),
+            editedAt: Date.now(),
+          }
+        : post,
+    ),
+  });
+}
+
+function applyDeletePostAction(state, action, actorId) {
+  const postId = normalizeActionId(action.postId);
+  const targetPost = state.posts.find((post) => post.id === postId);
+  if (!targetPost) throw new ActionRejectedError(404, "Post not found");
+  const wall = state.walls.find((item) => item.id === targetPost.wallId);
+  if (targetPost.authorId !== actorId && !canManageWall(wall, actorId)) {
+    throw new ActionRejectedError(403, "Cannot delete post");
+  }
+
+  const commentIds = new Set(state.comments.filter((comment) => comment.postId === postId).map((comment) => comment.id));
+
+  return {
+    ...state,
+    posts: state.posts.filter((post) => post.id !== postId),
+    comments: state.comments.filter((comment) => comment.postId !== postId),
+    postConnections: state.postConnections.filter(
+      (connection) => connection.fromPostId !== postId && connection.toPostId !== postId,
+    ),
+    savedPostIds: state.savedPostIds.filter((id) => id !== postId),
+    pinnedPostIds: state.pinnedPostIds.filter((id) => id !== postId),
+    hiddenPostIds: state.hiddenPostIds.filter((id) => id !== postId),
+    hiddenCommentIds: state.hiddenCommentIds.filter((id) => !commentIds.has(id)),
+    notifications: state.notifications.filter((item) => item.postId !== postId),
+    reports: state.reports.filter((report) => report.postId !== postId && (!report.commentId || !commentIds.has(report.commentId))),
+  };
+}
+
+function applyToggleSavedPostAction(state, action) {
+  const postId = normalizeActionId(action.postId);
+  const targetPost = state.posts.find((post) => post.id === postId);
+  if (!targetPost) throw new ActionRejectedError(404, "Post not found");
+  if (getPostSettings(targetPost).saves === false) return state;
+
+  return {
+    ...state,
+    savedPostIds: state.savedPostIds.includes(postId)
+      ? state.savedPostIds.filter((id) => id !== postId)
+      : [postId, ...state.savedPostIds],
+  };
+}
+
+function applyRepostAction(state, action, actorId) {
+  const sourcePost = getRepostSourcePost(state.posts, normalizeActionId(action.postId));
+  if (!sourcePost) throw new ActionRejectedError(404, "Post not found");
+  if (getPostSettings(sourcePost).reposts === false) return state;
+  if (hasUserRepostedPost(state.posts, sourcePost.id, actorId)) return state;
+
+  const wallId = `${profileWallPrefix}${actorId}`;
+  const stateWithWall = ensureActionWallExists(state, wallId, actorId);
+  const repostId = normalizeActionId(action.repostId) || randomUUID();
+  const position = normalizePosition(action.position) ?? { x: 274, y: 220 };
+
+  return {
+    ...stateWithWall,
+    posts: [
+      {
+        id: repostId,
+        wallId,
+        authorId: actorId,
+        text: "",
+        attachments: [],
+        reactions: 0,
+        views: { total: 0, uniqueUserIds: [] },
+        position,
+        repostOfId: sourcePost.id,
+        createdAt: Number(action.createdAt) || Date.now(),
+      },
+      ...stateWithWall.posts,
+    ],
+    notifications: addPostNotification(stateWithWall, {
+      kind: "repost",
+      actorId,
+      postId: sourcePost.id,
+      text: "Заметка появилась на доске",
+    }),
+  };
+}
+
+function applyCreateCommentAction(state, action, actorId) {
+  const incomingComment = action.comment;
+  if (!incomingComment || typeof incomingComment !== "object") {
+    throw new ActionRejectedError(400, "Missing comment");
+  }
+
+  const postId = normalizeActionId(incomingComment.postId);
+  const targetPost = state.posts.find((post) => post.id === postId);
+  if (!targetPost) throw new ActionRejectedError(404, "Post not found");
+  if (getPostSettings(targetPost).comments === false) return state;
+
+  const parentId = normalizeActionId(incomingComment.parentId);
+  const parentComment = parentId ? state.comments.find((comment) => comment.id === parentId) : undefined;
+  if (parentId && (!parentComment || parentComment.postId !== postId)) {
+    throw new ActionRejectedError(400, "Invalid parent comment");
+  }
+
+  const commentId = normalizeActionId(incomingComment.id) || randomUUID();
+  if (state.comments.some((comment) => comment.id === commentId)) return state;
+
+  const normalized = sanitizeSocialState({
+    ...state,
+    comments: [
+      ...state.comments,
+      {
+        id: commentId,
+        postId,
+        parentId: parentId || undefined,
+        authorId: actorId,
+        text: typeof incomingComment.text === "string" ? incomingComment.text.slice(0, 3000) : "",
+        attachments: Array.isArray(incomingComment.attachments) ? incomingComment.attachments : [],
+        reactions: 0,
+        createdAt: Number(incomingComment.createdAt) || Date.now(),
+      },
+    ],
+  });
+  const createdComment = normalized.comments.find((comment) => comment.id === commentId);
+  if (!createdComment) return normalized;
+
+  return {
+    ...normalized,
+    notifications: [
+      ...buildCommentNotifications(normalized, createdComment),
+      ...buildMentionNotifications(normalized, actorId, postId, createdComment.text, commentId),
+      ...normalized.notifications,
+    ],
+  };
+}
+
+function applyReactCommentAction(state, action, actorId) {
+  const commentId = normalizeActionId(action.commentId);
+  const amount = Math.max(1, Math.min(50, Math.floor(Number(action.amount) || 1)));
+  const targetComment = state.comments.find((comment) => comment.id === commentId);
+  if (!targetComment) throw new ActionRejectedError(404, "Comment not found");
+
+  return {
+    ...state,
+    comments: state.comments.map((comment) =>
+      comment.id === commentId ? { ...comment, reactions: Math.max(0, Number(comment.reactions) || 0) + amount } : comment,
+    ),
+    notifications: addCommentReactionNotification(state, actorId, commentId),
+  };
+}
+
+function applyUpdateCommentAction(state, action, actorId) {
+  const commentId = normalizeActionId(action.commentId);
+  const nextText = typeof action.text === "string" ? action.text.trim().slice(0, 3000) : "";
+  if (!nextText) throw new ActionRejectedError(400, "Missing comment text");
+
+  return {
+    ...state,
+    comments: state.comments.map((comment) =>
+      comment.id === commentId && comment.authorId === actorId
+        ? { ...comment, text: nextText, editedAt: Date.now() }
+        : comment,
+    ),
+  };
+}
+
+function applyDeleteCommentAction(state, action, actorId) {
+  const commentId = normalizeActionId(action.commentId);
+  const targetComment = state.comments.find((comment) => comment.id === commentId);
+  if (!targetComment) throw new ActionRejectedError(404, "Comment not found");
+  const targetPost = state.posts.find((post) => post.id === targetComment.postId);
+  const wall = targetPost ? state.walls.find((item) => item.id === targetPost.wallId) : undefined;
+  if (targetComment.authorId !== actorId && !canManageWall(wall, actorId)) {
+    throw new ActionRejectedError(403, "Cannot delete comment");
+  }
+
+  const idsToDelete = new Set([commentId]);
+  for (const comment of state.comments) {
+    if (comment.parentId === commentId) idsToDelete.add(comment.id);
+  }
+
+  return {
+    ...state,
+    comments: state.comments.filter((comment) => !idsToDelete.has(comment.id)),
+    hiddenCommentIds: state.hiddenCommentIds.filter((id) => !idsToDelete.has(id)),
+    reports: state.reports.filter((report) => !report.commentId || !idsToDelete.has(report.commentId)),
+  };
+}
+
+function applyToggleChecklistAction(state, action, actorId) {
+  const postId = normalizeActionId(action.postId);
+  const itemId = normalizeActionId(action.itemId);
+
+  return {
+    ...state,
+    posts: state.posts.map((post) => {
+      if (post.id !== postId || !Array.isArray(post.checklist)) return post;
+
+      return {
+        ...post,
+        checklist: post.checklist.map((item) => {
+          if (item.id !== itemId) return item;
+          const isChecked = item.checkedBy.includes(actorId);
+          return {
+            ...item,
+            checkedBy: isChecked
+              ? item.checkedBy.filter((id) => id !== actorId)
+              : [...item.checkedBy, actorId],
+          };
+        }),
+      };
+    }),
+  };
+}
+
+function applyVotePollAction(state, action, actorId) {
+  const postId = normalizeActionId(action.postId);
+  const optionId = normalizeActionId(action.optionId);
+
+  return {
+    ...state,
+    posts: state.posts.map((post) => {
+      if (post.id !== postId || !post.poll) return post;
+      const hasVotedOption = post.poll.options.some((option) => option.id === optionId && option.voterIds.includes(actorId));
+
+      return {
+        ...post,
+        poll: {
+          ...post.poll,
+          options: post.poll.options.map((option) => {
+            if (post.poll?.multi) {
+              if (option.id !== optionId) return option;
+              return {
+                ...option,
+                voterIds: hasVotedOption
+                  ? option.voterIds.filter((id) => id !== actorId)
+                  : [...option.voterIds, actorId],
+              };
+            }
+
+            if (option.id === optionId) {
+              return {
+                ...option,
+                voterIds: hasVotedOption
+                  ? option.voterIds.filter((id) => id !== actorId)
+                  : Array.from(new Set([...option.voterIds, actorId])),
+              };
+            }
+
+            return {
+              ...option,
+              voterIds: option.voterIds.filter((id) => id !== actorId),
+            };
+          }),
+        },
+      };
+    }),
+  };
+}
+
+function applyToggleFollowAction(state, action, actorId) {
+  const targetType = action.targetType === "wall" ? "wall" : "user";
+  const targetId = normalizeActionId(action.targetId);
+  if (!targetId) throw new ActionRejectedError(400, "Missing follow target");
+  if (targetType === "wall" && !state.walls.some((wall) => wall.id === targetId)) throw new ActionRejectedError(404, "Wall not found");
+  if (targetType === "user" && !state.users.some((user) => user.id === targetId)) throw new ActionRejectedError(404, "User not found");
+
+  const existing = state.follows.find((follow) => follow.targetType === targetType && follow.targetId === targetId);
+  if (existing) {
+    return {
+      ...state,
+      follows: state.follows.filter((follow) => follow.id !== existing.id),
+    };
+  }
+
+  return {
+    ...state,
+    follows: [
+      {
+        id: randomUUID(),
+        targetId,
+        targetType,
+        createdAt: Date.now(),
+      },
+      ...state.follows,
+    ],
+    notifications: addFollowNotification(state, actorId, targetType, targetId),
+  };
+}
+
+function applyCreateConnectionAction(state, action, actorId) {
+  const connection = action.connection;
+  if (!connection || typeof connection !== "object") throw new ActionRejectedError(400, "Missing connection");
+  const fromPostId = normalizeActionId(connection.fromPostId);
+  const toPostId = normalizeActionId(connection.toPostId);
+  if (!fromPostId || !toPostId || fromPostId === toPostId) throw new ActionRejectedError(400, "Invalid connection");
+  if (!state.posts.some((post) => post.id === fromPostId) || !state.posts.some((post) => post.id === toPostId)) {
+    throw new ActionRejectedError(404, "Post not found");
+  }
+  if (state.postConnections.some((item) => item.fromPostId === fromPostId && item.toPostId === toPostId)) return state;
+
+  return sanitizeSocialState({
+    ...state,
+    postConnections: [
+      {
+        id: normalizeActionId(connection.id) || randomUUID(),
+        fromPostId,
+        toPostId,
+        authorId: actorId,
+        label: typeof connection.label === "string" ? connection.label : undefined,
+        createdAt: Number(connection.createdAt) || Date.now(),
+      },
+      ...state.postConnections,
+    ],
+  });
+}
+
+function applyDeleteConnectionAction(state, action, actorId) {
+  const connectionId = normalizeActionId(action.connectionId);
+  const connection = state.postConnections.find((item) => item.id === connectionId);
+  if (!connection) throw new ActionRejectedError(404, "Connection not found");
+  const fromPost = state.posts.find((post) => post.id === connection.fromPostId);
+  const wall = fromPost ? state.walls.find((item) => item.id === fromPost.wallId) : undefined;
+  if (connection.authorId !== actorId && !canManageWall(wall, actorId)) {
+    throw new ActionRejectedError(403, "Cannot delete connection");
+  }
+
+  return {
+    ...state,
+    postConnections: state.postConnections.filter((item) => item.id !== connectionId),
+  };
+}
+
+function applyCreateWallAction(state, action, actorId) {
+  const wall = action.wall;
+  if (!wall || typeof wall !== "object") throw new ActionRejectedError(400, "Missing wall");
+  const wallId = normalizeActionId(wall.id);
+  if (!wallId || state.walls.some((item) => item.id === wallId)) return state;
+
+  return sanitizeSocialState({
+    ...state,
+    walls: [
+      {
+        ...wall,
+        id: wallId,
+        siteSectionId: wall.siteSectionId || spaceSectionId,
+        ownerId: actorId,
+      },
+      ...state.walls,
+    ],
+  });
+}
+
+function applyUpdateWallAction(state, action, actorId) {
+  const wallId = normalizeActionId(action.wallId);
+  const targetWall = state.walls.find((wall) => wall.id === wallId);
+  if (!targetWall) throw new ActionRejectedError(404, "Wall not found");
+  if (!canManageWall(targetWall, actorId)) throw new ActionRejectedError(403, "Cannot update wall");
+
+  return sanitizeSocialState({
+    ...state,
+    walls: state.walls.map((wall) =>
+      wall.id === wallId
+        ? {
+            ...wall,
+            ...action.wall,
+            id: wall.id,
+            siteSectionId: wall.siteSectionId,
+            ownerId: wall.ownerId,
+          }
+        : wall,
+    ),
+  });
+}
+
+function applyDeleteWallAction(state, action, actorId) {
+  const wallId = normalizeActionId(action.wallId);
+  const wall = state.walls.find((item) => item.id === wallId);
+  if (!wall) throw new ActionRejectedError(404, "Wall not found");
+  if (wall.id.startsWith(profileWallPrefix) || wall.id === minecraftWallId) throw new ActionRejectedError(403, "Cannot delete wall");
+  if (!canManageWall(wall, actorId)) throw new ActionRejectedError(403, "Cannot delete wall");
+
+  const postIds = new Set(state.posts.filter((post) => post.wallId === wallId).map((post) => post.id));
+  const commentIds = new Set(state.comments.filter((comment) => postIds.has(comment.postId)).map((comment) => comment.id));
+
+  return {
+    ...state,
+    walls: state.walls.filter((item) => item.id !== wallId),
+    posts: state.posts.filter((post) => post.wallId !== wallId),
+    comments: state.comments.filter((comment) => !postIds.has(comment.postId)),
+    postConnections: state.postConnections.filter(
+      (connection) => !postIds.has(connection.fromPostId) && !postIds.has(connection.toPostId),
+    ),
+    follows: state.follows.filter((follow) => follow.targetType !== "wall" || follow.targetId !== wallId),
+    savedPostIds: state.savedPostIds.filter((postId) => !postIds.has(postId)),
+    pinnedPostIds: state.pinnedPostIds.filter((postId) => !postIds.has(postId)),
+    hiddenPostIds: state.hiddenPostIds.filter((postId) => !postIds.has(postId)),
+    hiddenCommentIds: state.hiddenCommentIds.filter((commentId) => !commentIds.has(commentId)),
+    notifications: state.notifications.filter((item) => !item.postId || !postIds.has(item.postId)),
+    reports: state.reports.filter((report) => {
+      if (report.postId && postIds.has(report.postId)) return false;
+      if (report.commentId && commentIds.has(report.commentId)) return false;
+      return true;
     }),
   };
 }
@@ -488,7 +944,90 @@ function addPostNotification(state, { actorId, kind, postId, text }) {
   ];
 }
 
-function buildMentionNotifications(state, actorId, postId, text) {
+function getRepostSourcePost(posts, postId) {
+  const post = posts.find((item) => item.id === postId);
+  if (!post) return null;
+  return post.repostOfId ? posts.find((item) => item.id === post.repostOfId) ?? post : post;
+}
+
+function hasUserRepostedPost(posts, sourcePostId, userId) {
+  return posts.some((post) => post.authorId === userId && post.repostOfId === sourcePostId);
+}
+
+function buildCommentNotifications(state, comment) {
+  const post = state.posts.find((item) => item.id === comment.postId);
+  if (!post) return [];
+
+  const notifications = [];
+  const parentComment = comment.parentId
+    ? state.comments.find((item) => item.id === comment.parentId)
+    : undefined;
+
+  if (parentComment && parentComment.authorId !== comment.authorId) {
+    notifications.push({
+      id: randomUUID(),
+      kind: "reply",
+      actorId: comment.authorId,
+      recipientId: parentComment.authorId,
+      postId: comment.postId,
+      commentId: comment.id,
+      text: "Ответ на ваш ответ",
+      createdAt: Date.now(),
+    });
+  }
+
+  if (post.authorId !== comment.authorId && post.authorId !== parentComment?.authorId) {
+    notifications.push({
+      id: randomUUID(),
+      kind: "comment",
+      actorId: comment.authorId,
+      recipientId: post.authorId,
+      postId: comment.postId,
+      commentId: comment.id,
+      text: "Новый ответ",
+      createdAt: Date.now(),
+    });
+  }
+
+  return notifications;
+}
+
+function addCommentReactionNotification(state, actorId, commentId) {
+  const comment = state.comments.find((item) => item.id === commentId);
+  if (!comment || comment.authorId === actorId) return state.notifications;
+
+  return [
+    {
+      id: randomUUID(),
+      kind: "reaction",
+      actorId,
+      recipientId: comment.authorId,
+      postId: comment.postId,
+      commentId,
+      text: "Огонёк на ваш ответ",
+      createdAt: Date.now(),
+    },
+    ...state.notifications,
+  ];
+}
+
+function addFollowNotification(state, actorId, targetType, targetId) {
+  if (targetType !== "user" || targetId === actorId) return state.notifications;
+
+  return [
+    {
+      id: randomUUID(),
+      kind: "follow",
+      actorId,
+      recipientId: targetId,
+      text: "Новая подписка",
+      createdAt: Date.now(),
+    },
+    ...state.notifications,
+  ];
+}
+
+function buildMentionNotifications(state, actorId, postId, text, commentId) {
   if (typeof text !== "string" || !text.includes("@")) return [];
   const lowerText = text.toLowerCase();
 
@@ -500,6 +1039,7 @@ function buildMentionNotifications(state, actorId, postId, text) {
       actorId,
       recipientId: user.id,
       postId,
+      commentId,
       text: "Вас упомянули",
       createdAt: Date.now(),
     }));

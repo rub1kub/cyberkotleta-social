@@ -803,6 +803,14 @@ function App() {
       ...current,
       walls: [wall, ...current.walls],
     }));
+    if (activeUser) {
+      dispatchSharedAction({
+        type: "wall.create",
+        actorId: activeUser.id,
+        actor: activeUser,
+        wall,
+      });
+    }
     navigate({ view: "space", spaceId: wall.id });
     celebrate("wall");
   }
@@ -1083,9 +1091,16 @@ function App() {
         ...current.notifications,
       ],
     }));
+    dispatchSharedAction({
+      type: "comment.create",
+      actorId: activeUser.id,
+      actor: activeUser,
+      comment,
+    });
   }
 
   function reactToComment(commentId: string) {
+    if (!activeUser) return;
     setState((current) => ({
       ...current,
       comments: current.comments.map((comment) =>
@@ -1093,9 +1108,17 @@ function App() {
       ),
       notifications: addCommentReactionNotification(current, current.activeUserId, commentId),
     }));
+    dispatchSharedAction({
+      type: "comment.react",
+      actorId: activeUser.id,
+      actor: activeUser,
+      commentId,
+      amount: 1,
+    });
   }
 
   function editComment(commentId: string, text: string) {
+    if (!activeUser) return;
     const nextText = text.trim();
     if (!nextText) return;
 
@@ -1107,9 +1130,17 @@ function App() {
           : comment,
       ),
     }));
+    dispatchSharedAction({
+      type: "comment.update",
+      actorId: activeUser.id,
+      actor: activeUser,
+      commentId,
+      text: nextText,
+    });
   }
 
   function deleteComment(commentId: string) {
+    const actor = activeUser;
     setState((current) => {
       const target = current.comments.find((comment) => comment.id === commentId);
       if (!target || target.authorId !== current.activeUserId) return current;
@@ -1126,6 +1157,14 @@ function App() {
         reports: current.reports.filter((report) => !report.commentId || !idsToDelete.has(report.commentId)),
       };
     });
+    if (actor) {
+      dispatchSharedAction({
+        type: "comment.delete",
+        actorId: actor.id,
+        actor,
+        commentId,
+      });
+    }
   }
 
   function hideComment(commentId: string) {
@@ -1159,6 +1198,7 @@ function App() {
   }
 
   function editPost(postId: string, text: string, options?: PostUpdatePayload) {
+    if (!activeUser) return;
     setState((current) => ({
       ...current,
       posts: current.posts.map((post) =>
@@ -1177,9 +1217,18 @@ function App() {
           : post,
       ),
     }));
+    dispatchSharedAction({
+      type: "post.update",
+      actorId: activeUser.id,
+      actor: activeUser,
+      postId,
+      text: text.trim(),
+      options,
+    });
   }
 
   function deletePost(postId: string) {
+    const actor = activeUser;
     setState((current) => ({
       ...current,
       posts: current.posts.filter((post) => post.id !== postId),
@@ -1196,6 +1245,14 @@ function App() {
     }));
     if (route.view === "post" && route.postId === postId) {
       navigate({ view: "feed" });
+    }
+    if (actor) {
+      dispatchSharedAction({
+        type: "post.delete",
+        actorId: actor.id,
+        actor,
+        postId,
+      });
     }
   }
 
@@ -1214,6 +1271,7 @@ function App() {
   }
 
   function toggleSavedPost(postId: string) {
+    if (!activeUser) return;
     setState((current) => ({
       ...current,
       savedPostIds: !getPostSettings(current.posts.find((post) => post.id === postId)).saves
@@ -1222,6 +1280,12 @@ function App() {
         ? current.savedPostIds.filter((id) => id !== postId)
         : [postId, ...current.savedPostIds],
     }));
+    dispatchSharedAction({
+      type: "post.save.toggle",
+      actorId: activeUser.id,
+      actor: activeUser,
+      postId,
+    });
   }
 
   function repostPost(postId: string) {
@@ -1268,6 +1332,15 @@ function App() {
         }),
       };
     });
+    dispatchSharedAction({
+      type: "post.repost",
+      actorId: activeUser.id,
+      actor: activeUser,
+      postId: sourcePost.id,
+      repostId: repost.id,
+      position: repost.position,
+      createdAt: repost.createdAt,
+    });
     celebrate("post");
   }
 
@@ -1294,6 +1367,13 @@ function App() {
         };
       }),
     }));
+    dispatchSharedAction({
+      type: "checklist.toggle",
+      actorId: activeUser.id,
+      actor: activeUser,
+      postId,
+      itemId,
+    });
   }
 
   function voteInPoll(postId: string, optionId: string) {
@@ -1340,6 +1420,13 @@ function App() {
         };
       }),
     }));
+    dispatchSharedAction({
+      type: "poll.vote",
+      actorId: activeUser.id,
+      actor: activeUser,
+      postId,
+      optionId,
+    });
   }
 
   function startPostConnection(postId: string) {
@@ -1351,6 +1438,13 @@ function App() {
       setConnectionSourcePostId(null);
       return;
     }
+    const connection: PostConnection = {
+      id: crypto.randomUUID(),
+      fromPostId: connectionSourcePostId,
+      toPostId: postId,
+      authorId: activeUser.id,
+      createdAt: Date.now(),
+    };
 
     setState((current) => {
       const toPost = current.posts.find((post) => post.id === postId);
@@ -1365,25 +1459,32 @@ function App() {
       return {
         ...current,
         postConnections: [
-          {
-            id: crypto.randomUUID(),
-            fromPostId: connectionSourcePostId,
-            toPostId: postId,
-            authorId: activeUser.id,
-            createdAt: Date.now(),
-          },
+          connection,
           ...current.postConnections,
         ],
       };
+    });
+    dispatchSharedAction({
+      type: "connection.create",
+      actorId: activeUser.id,
+      actor: activeUser,
+      connection,
     });
     setConnectionSourcePostId(null);
   }
 
   function deletePostConnection(connectionId: string) {
+    if (!activeUser) return;
     setState((current) => ({
       ...current,
       postConnections: current.postConnections.filter((connection) => connection.id !== connectionId),
     }));
+    dispatchSharedAction({
+      type: "connection.delete",
+      actorId: activeUser.id,
+      actor: activeUser,
+      connectionId,
+    });
   }
 
   function reportPost(postId: string, reason = "Жалоба") {
@@ -1438,35 +1539,54 @@ function App() {
         notifications: addFollowNotification(current, activeUser.id, targetType, targetId),
       };
     });
+    dispatchSharedAction({
+      type: "follow.toggle",
+      actorId: activeUser.id,
+      actor: activeUser,
+      targetId,
+      targetType,
+    });
   }
 
   function updateWallSettings(wallId: string, payload: WallSettingsPayload) {
+    if (!activeUser) return;
+    const wallUpdate: Partial<Wall> = {
+      actionButtons: payload.actionButtons,
+      avatarUrl: payload.avatarUrl.trim() || undefined,
+      bannerUrl: payload.bannerUrl.trim() || undefined,
+      avatarFocus: payload.avatarFocus,
+      bannerFocus: payload.bannerFocus,
+      accentColor: payload.accentColor || undefined,
+      description: payload.description.trim(),
+      name: payload.name.trim(),
+      rules: payload.rules.trim(),
+      privacyMode: payload.privacyMode,
+      invite: payload.privacyMode === "public" ? undefined : normalizeWallInviteSettings(payload.invite),
+      publishMode: payload.publishMode,
+    };
     setState((current) => ({
       ...current,
       walls: current.walls.map((wall) =>
         wall.id === wallId
           ? {
               ...wall,
-              actionButtons: payload.actionButtons,
-              avatarUrl: payload.avatarUrl.trim() || undefined,
-              bannerUrl: payload.bannerUrl.trim() || undefined,
-              avatarFocus: payload.avatarFocus,
-              bannerFocus: payload.bannerFocus,
-              accentColor: payload.accentColor || undefined,
-              description: payload.description.trim(),
-              name: payload.name.trim(),
-              rules: payload.rules.trim(),
-              privacyMode: payload.privacyMode,
-              invite: payload.privacyMode === "public" ? undefined : normalizeWallInviteSettings(payload.invite),
-              publishMode: payload.publishMode,
+              ...wallUpdate,
             }
           : wall,
       ),
     }));
+    dispatchSharedAction({
+      type: "wall.update",
+      actorId: activeUser.id,
+      actor: activeUser,
+      wallId,
+      wall: wallUpdate,
+    });
     setSettingsWallId(null);
   }
 
   function deleteWall(wallId: string) {
+    const actor = activeUser;
     setState((current) => {
       const wall = current.walls.find((item) => item.id === wallId);
       if (!wall || !canManageWall(wall, current.activeUserId) || wall.id.startsWith(profileWallPrefix)) {
@@ -1499,6 +1619,14 @@ function App() {
         }),
       };
     });
+    if (actor) {
+      dispatchSharedAction({
+        type: "wall.delete",
+        actorId: actor.id,
+        actor,
+        wallId,
+      });
+    }
 
     if (route.view === "space" && route.spaceId === wallId) {
       navigate({ view: "feed" });
