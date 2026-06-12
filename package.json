@@ -16,7 +16,8 @@
     "preview": "vite preview",
     "start": "node server/index.mjs",
     "test:server": "node server/smoke-test.mjs",
-    "check": "npm run build && npm run test:server"
+    "check": "npm run build && npm run test:server",
+    "deploy:prod": "bash scripts/deploy-prod.sh"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.1.1",

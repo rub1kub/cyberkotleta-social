@@ -105,6 +105,14 @@ The live deployment uses:
 
 Server state and uploaded media live outside the release directory so deploys do not overwrite user data.
 
+Deploy with:
+
+```bash
+npm run deploy:prod
+```
+
+The deploy script keeps older hashed assets in `dist/assets` during release. This prevents already-open browser tabs from requesting a deleted JS/CSS file and receiving the SPA HTML fallback instead.
+
 ## Development Process
 
 The project was designed and implemented iteratively with ChatGPT Codex used as an engineering assistant for code changes, UI QA, deployment automation, and review loops. Product decisions, repository ownership, and final direction remain project-owned; Codex is documented here as part of the tooling, not as the product itself.
