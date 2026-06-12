@@ -517,6 +517,7 @@ textarea:focus-visible {
 }
 
 .composer-card {
+  position: relative;
   display: grid;
   gap: 10px;
   padding: 12px;
@@ -531,6 +532,25 @@ textarea:focus-visible {
   box-shadow:
     0 0 0 4px color-mix(in srgb, var(--post-accent, var(--accent)) 12%, transparent),
     var(--shadow);
+}
+
+.composer-drop-overlay {
+  position: absolute;
+  inset: 10px;
+  z-index: 8;
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  border: 1px dashed color-mix(in srgb, var(--post-accent, var(--accent)) 72%, var(--line));
+  border-radius: calc(var(--radius-l) - 10px);
+  background:
+    radial-gradient(circle at 50% 36%, color-mix(in srgb, var(--post-accent-soft, var(--accent-soft)) 82%, transparent), transparent 46%),
+    color-mix(in srgb, var(--surface) 84%, transparent);
+  color: var(--post-accent-2, var(--accent-2));
+  font-size: 13px;
+  font-weight: 850;
+  pointer-events: none;
+  backdrop-filter: blur(12px);
 }
 
 .composer-card textarea {
@@ -850,6 +870,20 @@ button:disabled {
   margin-top: 14px;
 }
 
+.media-image-button {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  cursor: zoom-in;
+}
+
+.media-image-button.compact .media {
+  min-height: 96px;
+}
+
 .media-grid.count-1 {
   grid-template-columns: 1fr;
 }
@@ -857,6 +891,45 @@ button:disabled {
 .media-grid.count-2,
 .media-grid.count-3 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.media-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 420;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, #050707 76%, transparent);
+  padding: 22px;
+  cursor: zoom-out;
+  backdrop-filter: blur(18px);
+  animation: fade-in 0.16s var(--ease-out) both;
+}
+
+.media-lightbox img {
+  display: block;
+  max-width: min(1120px, 94vw);
+  max-height: 88vh;
+  border: 1px solid color-mix(in srgb, #ffffff 18%, transparent);
+  border-radius: 24px;
+  object-fit: contain;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.42);
+}
+
+.media-lightbox-close {
+  position: fixed;
+  right: 20px;
+  top: 20px;
+  z-index: 1;
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, #ffffff 20%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  color: var(--text);
+  padding: 0;
 }
 
 .media {
@@ -1911,6 +1984,15 @@ button:disabled {
   to {
     opacity: 1;
     transform: scale(1);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }
 
@@ -3728,19 +3810,44 @@ body {
 }
 
 .post-accent-row button,
+.post-accent-custom,
 .sketch-palette button {
+  position: relative;
+  display: grid;
   width: 28px;
   height: 28px;
+  place-items: center;
+  overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--wall-swatch, var(--swatch));
   padding: 0;
+  cursor: pointer;
 }
 
 .post-accent-row button.active,
+.post-accent-custom.active,
 .sketch-palette button.active {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.post-accent-custom span {
+  width: 12px;
+  height: 12px;
+  border: 2px solid color-mix(in srgb, #ffffff 78%, transparent);
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, #000000 18%, transparent);
+}
+
+.post-accent-custom input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  cursor: pointer;
+  opacity: 0;
 }
 
 .checklist-editor label,
@@ -4157,6 +4264,14 @@ body {
   background: color-mix(in srgb, var(--post-accent-soft, var(--accent-soft)) 72%, var(--surface));
   opacity: 1;
   transform: translateY(-1px);
+}
+
+.composer-resize-handle span {
+  width: 12px;
+  height: 12px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  border-radius: 0 0 4px 0;
 }
 
 .draft-appearance-preview {
@@ -6881,6 +6996,67 @@ button:focus-visible {
   display: none;
 }
 
+.field-board .connection-prompt {
+  left: max(22px, var(--field-main-left, 0px));
+  top: 214px;
+}
+
+.connection-prompt {
+  position: absolute;
+  z-index: 28;
+  display: inline-flex;
+  max-width: min(420px, calc(100vw - 32px));
+  align-items: center;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 46%, var(--line));
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  color: var(--text);
+  padding: 9px 10px;
+  box-shadow: var(--shadow);
+  pointer-events: auto;
+  backdrop-filter: blur(16px);
+  animation: pop-in 0.16s var(--ease-out) both;
+}
+
+.connection-prompt > svg {
+  flex: 0 0 auto;
+  color: var(--accent-2);
+}
+
+.connection-prompt span {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.connection-prompt strong,
+.connection-prompt small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connection-prompt strong {
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.connection-prompt small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.connection-prompt button {
+  min-height: 32px;
+  border-color: transparent;
+  background: var(--surface-muted);
+  color: var(--muted);
+  padding: 0 10px;
+  font-size: 12px;
+}
+
 .field-board .wall-board-canvas {
   position: absolute;
   inset: 0;
@@ -6910,6 +7086,13 @@ button:focus-visible {
 
 .wall-board-head span {
   color: var(--accent-2);
+}
+
+.wall-board:not(.field-board) .connection-prompt {
+  position: relative;
+  left: auto;
+  top: auto;
+  margin-bottom: 10px;
 }
 
 .wall-board-canvas {

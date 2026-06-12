@@ -914,10 +914,16 @@ function App() {
   }
 
   function movePost(postId: string, x: number, y: number) {
+    if (!activeUser) return;
+
     const position = clampPostPosition({
       x: Math.round(x / boardGridSize) * boardGridSize,
       y: Math.round(y / boardGridSize) * boardGridSize,
     });
+    const currentState = latestSocialStateRef.current;
+    const targetPost = currentState.posts.find((post) => post.id === postId);
+    if (!canMoveSharedPost(targetPost, currentState.walls, activeUser.id)) return;
+
     setState((current) => {
       const targetPost = current.posts.find((post) => post.id === postId);
       if (!canMoveSharedPost(targetPost, current.walls, current.activeUserId)) return current;
@@ -935,16 +941,14 @@ function App() {
       };
     });
 
-    if (activeUser) {
-      dispatchSharedAction({
-        type: "post.move",
-        actorId: activeUser.id,
-        actor: activeUser,
-        postId,
-        x: position.x,
-        y: position.y,
-      });
-    }
+    dispatchSharedAction({
+      type: "post.move",
+      actorId: activeUser.id,
+      actor: activeUser,
+      postId,
+      x: position.x,
+      y: position.y,
+    });
   }
 
   function moveFieldPost(postId: string, x: number, y: number) {
@@ -2741,6 +2745,7 @@ function WallBoard({
       : basePostLayout,
     [avoidProtectedRects, basePostLayout, boardMaxX, isFieldBoard, protectedRects, resolveProtectedLayout],
   );
+  const connectionSourcePost = connectionSourcePostId ? postById.get(connectionSourcePostId) : undefined;
   const boardHeight = Math.max(
     720,
     ...postLayout.map(({ height, position }) => position.y + height + boardGap),
@@ -2843,6 +2848,18 @@ function WallBoard({
         <span>{title}</span>
         <small>{hint}</small>
       </div>
+      {connectionSourcePost ? (
+        <div className="connection-prompt" data-no-open>
+          <ArrowRight size={16} />
+          <span>
+            <strong>Стрелка отсюда</strong>
+            <small>Выбери заметку, куда вести связь</small>
+          </span>
+          <button type="button" onClick={() => onFinishPostConnection(connectionSourcePost.id)}>
+            Отмена
+          </button>
+        </div>
+      ) : null}
       <div className="wall-board-canvas" style={{ "--board-content-height": `${boardHeight}px` } as CSSProperties}>
         <BoardConnectionLayer
           connections={postConnections}
@@ -3566,6 +3583,12 @@ function Composer({
         onPaste={handlePaste}
         placeholder={placeholder}
       />
+      {isDraggingFiles ? (
+        <div className="composer-drop-overlay" data-no-open>
+          <Paperclip size={18} />
+          <span>Отпусти файл</span>
+        </div>
+      ) : null}
 
       {attachments.length > 0 ? (
         <div className="attachment-preview">
@@ -3660,7 +3683,7 @@ function Composer({
           aria-label="Изменить размер заметки"
           title="Тяни, чтобы изменить размер заметки"
         >
-          <Maximize2 size={13} strokeWidth={2.4} />
+          <span aria-hidden="true" />
         </button>
       ) : null}
     </section>
@@ -3690,6 +3713,9 @@ function PostObjectEditor({
     options.sketch.length > 0 ||
     options.checklist.length > 0 ||
     Boolean(options.poll);
+  const customPostAccentValue = normalizeHexColor(options.appearance.accentColor) ??
+    getWallAccentOption(wall?.accentColor ?? wallAccentOptions[0].id).accent;
+  const isCustomPostAccent = Boolean(normalizeHexColor(options.appearance.accentColor));
 
   function update(patch: Partial<PostDraftOptions>) {
     onChange({ ...options, ...patch });
@@ -3793,6 +3819,19 @@ function PostObjectEditor({
                   aria-label={option.label}
                 />
               ))}
+              <label
+                className={isCustomPostAccent ? "post-accent-custom active" : "post-accent-custom"}
+                style={{ "--wall-swatch": customPostAccentValue } as CSSProperties}
+                title="Свой цвет"
+              >
+                <span />
+                <input
+                  type="color"
+                  value={customPostAccentValue}
+                  onChange={(event) => updateAppearance({ accentColor: event.target.value })}
+                  aria-label="Свой цвет заметки"
+                />
+              </label>
             </div>
           </div>
         </details>
@@ -5328,12 +5367,6 @@ function PostCard({
       onClickCapture={handleCardClickCapture}
       onClick={handleCardClick}
     >
-      {surface === "field" ? (
-        <div className="object-topline">
-          <span>{getObjectKindLabel(fieldObjectKind)}</span>
-          <i>{getObjectSignal(post, commentCount)}</i>
-        </div>
-      ) : null}
       <header className="post-header">
         <button className="avatar-button" onClick={() => onOpenProfile(author.id)}>
           <Avatar user={author} />
@@ -6695,8 +6728,35 @@ function MediaPreview({
   attachment: MediaAttachment;
   compact?: boolean;
 }) {
+  const [isImageOpen, setIsImageOpen] = useState(false);
+
   if (attachment.type === "image") {
-    return <img className="media image-media" src={attachment.url} alt={attachment.name} />;
+    return (
+      <>
+        <button
+          type="button"
+          className={compact ? "media-image-button compact" : "media-image-button"}
+          onClick={() => setIsImageOpen(true)}
+          data-no-open
+          aria-label={`Открыть изображение ${attachment.name}`}
+        >
+          <img className="media image-media" src={attachment.url} alt={attachment.name} />
+        </button>
+        {isImageOpen ? (
+          <div className="media-lightbox" onClick={() => setIsImageOpen(false)} role="presentation" data-no-open>
+            <button
+              type="button"
+              className="media-lightbox-close"
+              onClick={() => setIsImageOpen(false)}
+              aria-label="Закрыть изображение"
+            >
+              <X size={18} />
+            </button>
+            <img src={attachment.url} alt={attachment.name} onClick={(event) => event.stopPropagation()} />
+          </div>
+        ) : null}
+      </>
+    );
   }
 
   if (attachment.type === "video") {
@@ -7892,7 +7952,7 @@ function getEstimatedDraftPostHeight(
   if (appearance.size === "tall") height += 120;
 
   if (post.attachments.length > 0) {
-    height += post.attachments.length === 1 ? 300 : 220;
+    height += post.attachments.length === 1 ? 230 : 190;
   }
 
   if ((post.sketch?.length ?? 0) > 0) {
@@ -8386,39 +8446,6 @@ function getPostObjectKind(post: Post, commentCount: number): ObjectKind {
   if (post.attachments.length > 0) return "media";
   if (commentCount > 1) return "branch";
   return "note";
-}
-
-function getObjectKindLabel(kind: ObjectKind): string {
-  const labels: Record<ObjectKind, string> = {
-    audio: "звук",
-    branch: "ветка",
-    fork: "ответвление",
-    media: "медиа",
-    note: "заметка",
-  };
-
-  return labels[kind];
-}
-
-function getObjectSignal(post: Post, commentCount: number): string {
-  if (commentCount > 0) return formatAnswerCount(commentCount);
-  if (post.reactions > 0) return `${formatCompactNumber(post.reactions)} огоньков`;
-  return "новое";
-}
-
-function formatAnswerCount(count: number): string {
-  const lastTwo = count % 100;
-  const last = count % 10;
-  const word =
-    lastTwo >= 11 && lastTwo <= 14
-      ? "ответов"
-      : last === 1
-        ? "ответ"
-        : last >= 2 && last <= 4
-          ? "ответа"
-          : "ответов";
-
-  return `${formatCompactNumber(count)} ${word}`;
 }
 
 function formatNoteCount(count: number): string {
