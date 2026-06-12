@@ -202,6 +202,7 @@ const pixelRows = 190;
 const maxPixelCells = pixelColumns * pixelRows;
 const pixelCooldownMs = 1000;
 const pixelSyncChannelName = "kotleta.pixel.v1";
+const audioPlaybackEventName = "kotleta:audio-play";
 const pixelPalette = ["#111318", "#f6f8f7", "#21e69a", "#0f9f68", "#6c7685", "#5c6cff", "#d93862"];
 const sketchPalette = ["#111318", "#f6f8f7", "#21e69a", "#0f9f68", "#6c7685", "#5c6cff", "#d93862", "#f2c94c"];
 const postKindOptions: Array<{ id: PostKind; label: string; hint: string }> = [
@@ -6890,6 +6891,17 @@ function CustomAudioPlayer({ attachment }: { attachment: MediaAttachment }) {
   const [duration, setDuration] = useState(0);
   const progress = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
 
+  useEffect(() => {
+    function handleOtherAudio(event: Event) {
+      const nextId = event instanceof CustomEvent ? event.detail?.id : undefined;
+      if (nextId === attachment.id) return;
+      audioRef.current?.pause();
+    }
+
+    window.addEventListener(audioPlaybackEventName, handleOtherAudio);
+    return () => window.removeEventListener(audioPlaybackEventName, handleOtherAudio);
+  }, [attachment.id]);
+
   function syncMetadata(target: HTMLAudioElement) {
     setDuration(Number.isFinite(target.duration) ? target.duration : 0);
     setCurrentTime(Number.isFinite(target.currentTime) ? target.currentTime : 0);
@@ -6900,6 +6912,7 @@ function CustomAudioPlayer({ attachment }: { attachment: MediaAttachment }) {
     if (!node) return;
 
     if (node.paused) {
+      window.dispatchEvent(new CustomEvent(audioPlaybackEventName, { detail: { id: attachment.id } }));
       void node.play().catch(() => setIsPlaying(false));
       return;
     }
@@ -6967,6 +6980,27 @@ function CustomAudioPlayer({ attachment }: { attachment: MediaAttachment }) {
           <SkipForward size={16} />
         </button>
       </div>
+      {isPlaying ? (
+        <div className="audio-mini-player" data-no-open>
+          <button type="button" className="audio-play-button mini" onClick={togglePlay} aria-label="Пауза">
+            <Pause size={16} fill="currentColor" />
+          </button>
+          <div className="audio-mini-copy">
+            <strong>{attachment.name}</strong>
+            <span>{formatMediaTime(currentTime)} / {formatMediaTime(duration)}</span>
+          </div>
+          <input
+            className="media-progress"
+            type="range"
+            min="0"
+            max="100"
+            value={progress}
+            onChange={(event) => seek(event.currentTarget.value)}
+            aria-label="Позиция аудио"
+            style={{ "--media-progress": `${progress}%` } as CSSProperties}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

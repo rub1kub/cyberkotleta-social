@@ -1049,6 +1049,12 @@ button:disabled {
   color: var(--post-accent-2, var(--accent-2));
 }
 
+.audio-play-button.mini {
+  width: 38px;
+  height: 38px;
+  border-radius: 14px;
+}
+
 .media-control-button {
   width: 34px;
   height: 34px;
@@ -1108,6 +1114,50 @@ button:disabled {
 
 .audio-controls {
   gap: 8px;
+}
+
+.audio-mini-player {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 410;
+  display: grid;
+  grid-template-columns: auto minmax(120px, 220px) minmax(120px, 190px);
+  max-width: min(640px, calc(100vw - 44px));
+  align-items: center;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--post-accent, var(--accent)) 38%, var(--line));
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  padding: 8px;
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(18px);
+  animation: pop-in 0.18s var(--ease-out) both;
+}
+
+.audio-mini-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.audio-mini-copy strong,
+.audio-mini-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audio-mini-copy strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.audio-mini-copy span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 760;
 }
 
 .media-progress {
@@ -5085,8 +5135,20 @@ body {
 .solid-button {
   border-color: color-mix(in srgb, var(--accent) 50%, transparent);
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  color: #03120c;
-}
+    color: #03120c;
+  }
+
+  .audio-mini-player {
+    right: 10px;
+    bottom: 76px;
+    left: 10px;
+    grid-template-columns: auto minmax(0, 1fr);
+    max-width: none;
+  }
+
+  .audio-mini-player .media-progress {
+    grid-column: 1 / -1;
+  }
 
 .create-wall:hover,
 .publish:not(:disabled):hover,
