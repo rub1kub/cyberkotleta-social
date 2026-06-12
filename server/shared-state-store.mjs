@@ -976,18 +976,15 @@ function addPostNotification(state, { actorId, kind, postId, text }) {
   const post = state.posts.find((item) => item.id === postId);
   if (!post || post.authorId === actorId) return state.notifications;
 
-  return [
-    {
-      id: randomUUID(),
-      kind,
-      actorId,
-      recipientId: post.authorId,
-      postId,
-      text,
-      createdAt: Date.now(),
-    },
-    ...state.notifications,
-  ];
+  return addStackedNotification(state.notifications, {
+    id: randomUUID(),
+    kind,
+    actorId,
+    recipientId: post.authorId,
+    postId,
+    text,
+    createdAt: Date.now(),
+  });
 }
 
 function getRepostSourcePost(posts, postId) {
@@ -1042,19 +1039,16 @@ function addCommentReactionNotification(state, actorId, commentId) {
   const comment = state.comments.find((item) => item.id === commentId);
   if (!comment || comment.authorId === actorId) return state.notifications;
 
-  return [
-    {
-      id: randomUUID(),
-      kind: "reaction",
-      actorId,
-      recipientId: comment.authorId,
-      postId: comment.postId,
-      commentId,
-      text: "Огонёк на ваш ответ",
-      createdAt: Date.now(),
-    },
-    ...state.notifications,
-  ];
+  return addStackedNotification(state.notifications, {
+    id: randomUUID(),
+    kind: "reaction",
+    actorId,
+    recipientId: comment.authorId,
+    postId: comment.postId,
+    commentId,
+    text: "Огонёк на ваш ответ",
+    createdAt: Date.now(),
+  });
 }
 
 function addFollowNotification(state, actorId, targetType, targetId) {
@@ -1071,6 +1065,44 @@ function addFollowNotification(state, actorId, targetType, targetId) {
     },
     ...state.notifications,
   ];
+}
+
+function addStackedNotification(notifications, notification) {
+  const parsed = parseNotificationStackText(notification.text);
+  const existingIndex = notifications.findIndex((item) => {
+    if (item.readAt) return false;
+    const existingText = parseNotificationStackText(item.text).text;
+    return item.recipientId === notification.recipientId &&
+      item.actorId === notification.actorId &&
+      item.kind === notification.kind &&
+      (item.postId ?? "") === (notification.postId ?? "") &&
+      (item.commentId ?? "") === (notification.commentId ?? "") &&
+      existingText === parsed.text;
+  });
+
+  if (existingIndex === -1) return [notification, ...notifications];
+
+  const existing = notifications[existingIndex];
+  const count = parseNotificationStackText(existing.text).count + parsed.count;
+  return [
+    {
+      ...notification,
+      text: formatNotificationStackText(parsed.text, count),
+    },
+    ...notifications.filter((_, index) => index !== existingIndex),
+  ];
+}
+
+function parseNotificationStackText(text) {
+  const match = typeof text === "string" ? text.match(/\s+×(\d+)$/) : null;
+  return {
+    count: match ? Math.max(1, Number(match[1]) || 1) : 1,
+    text: String(text ?? "").replace(/\s+×\d+$/, ""),
+  };
+}
+
+function formatNotificationStackText(text, count) {
+  return count > 1 ? `${text} ×${count}` : text;
 }
 
 function buildMentionNotifications(state, actorId, postId, text, commentId) {
@@ -1383,7 +1415,7 @@ function applyDirectSocialStateAction(db, action) {
   const actorId = normalizeActionId(action.actorId);
   const currentCommentIds = new Set(current.state.comments.map((comment) => comment.id));
   const currentConnectionIds = new Set(current.state.postConnections.map((connection) => connection.id));
-  const currentNotificationIds = new Set(current.state.notifications.map((notification) => notification.id));
+  const currentNotifications = current.state.notifications;
   const currentPostIds = new Set(current.state.posts.map((post) => post.id));
   const currentWallIds = new Set(current.state.walls.map((wall) => wall.id));
 
@@ -1441,7 +1473,7 @@ function applyDirectSocialStateAction(db, action) {
         break;
     }
 
-    insertNewNotificationRows(db, nextState, currentNotificationIds);
+    syncNotificationRows(db, nextState, currentNotifications);
   });
 
   return {
@@ -1653,12 +1685,29 @@ function upsertScopedListRow(db, kind, userId, ids) {
     .run(kind, userId, JSON.stringify(normalizedIds));
 }
 
-function insertNewNotificationRows(db, state, currentNotificationIds) {
-  const notifications = state.notifications.filter((notification) => !currentNotificationIds.has(notification.id));
-  if (notifications.length === 0) return;
+function syncNotificationRows(db, state, currentNotifications) {
+  const currentById = new Map(currentNotifications.map((notification) => [notification.id, notification]));
+  const nextById = new Map(state.notifications.map((notification) => [notification.id, notification]));
+
+  for (const current of currentNotifications) {
+    if (!nextById.has(current.id)) {
+      db.prepare("DELETE FROM notifications WHERE id = ?").run(current.id);
+    }
+  }
+
+  const newNotifications = state.notifications.filter((notification) => !currentById.has(notification.id));
+  if (state.notifications.length === 0) return;
 
   const frontSortOrder = getFrontSortOrder(db, "notifications");
-  notifications.forEach((notification, index) => {
+  const newNotificationOrder = new Map(newNotifications.map((notification, index) => [notification.id, index]));
+  state.notifications.forEach((notification) => {
+    const previous = currentById.get(notification.id);
+    if (previous && JSON.stringify(previous) === JSON.stringify(notification)) return;
+    const newIndex = newNotificationOrder.get(notification.id);
+    const fallbackSortOrder = Number.isFinite(newIndex)
+      ? frontSortOrder - newNotifications.length + newIndex + 1
+      : getBackSortOrder(db, "notifications");
+
     upsertJsonRow(db, {
       tableName: "notifications",
       idColumn: "id",
@@ -1669,7 +1718,7 @@ function insertNewNotificationRows(db, state, currentNotificationIds) {
         actor_id: notification.actorId,
         created_at: Number(notification.createdAt) || 0,
       },
-      fallbackSortOrder: frontSortOrder - notifications.length + index + 1,
+      fallbackSortOrder,
     });
   });
 }

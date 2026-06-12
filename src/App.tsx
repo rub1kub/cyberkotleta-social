@@ -7109,18 +7109,15 @@ function addPostNotification(
   const post = current.posts.find((item) => item.id === payload.postId);
   if (!post || post.authorId === payload.actorId) return current.notifications;
 
-  return [
-    {
-      id: crypto.randomUUID(),
-      kind: payload.kind,
-      actorId: payload.actorId,
-      recipientId: post.authorId,
-      postId: payload.postId,
-      text: payload.text,
-      createdAt: Date.now(),
-    },
-    ...current.notifications,
-  ];
+  return addStackedNotification(current.notifications, {
+    id: crypto.randomUUID(),
+    kind: payload.kind,
+    actorId: payload.actorId,
+    recipientId: post.authorId,
+    postId: payload.postId,
+    text: payload.text,
+    createdAt: Date.now(),
+  });
 }
 
 function buildCommentNotifications(current: SocialState, comment: Comment): NotificationItem[] {
@@ -7169,18 +7166,44 @@ function addCommentReactionNotification(
   const comment = current.comments.find((item) => item.id === commentId);
   if (!comment || comment.authorId === actorId) return current.notifications;
 
+  return addStackedNotification(current.notifications, {
+    id: crypto.randomUUID(),
+    kind: "reaction",
+    actorId,
+    recipientId: comment.authorId,
+    postId: comment.postId,
+    commentId,
+    text: "Огонёк на ваш ответ",
+    createdAt: Date.now(),
+  });
+}
+
+function addStackedNotification(
+  notifications: NotificationItem[],
+  notification: NotificationItem,
+): NotificationItem[] {
+  const parsed = parseNotificationStackText(notification.text);
+  const existingIndex = notifications.findIndex((item) => {
+    if (item.readAt) return false;
+    const existingText = parseNotificationStackText(item.text).text;
+    return item.recipientId === notification.recipientId &&
+      item.actorId === notification.actorId &&
+      item.kind === notification.kind &&
+      (item.postId ?? "") === (notification.postId ?? "") &&
+      (item.commentId ?? "") === (notification.commentId ?? "") &&
+      existingText === parsed.text;
+  });
+
+  if (existingIndex === -1) return [notification, ...notifications];
+
+  const existing = notifications[existingIndex];
+  const count = parseNotificationStackText(existing.text).count + parsed.count;
   return [
     {
-      id: crypto.randomUUID(),
-      kind: "reaction",
-      actorId,
-      recipientId: comment.authorId,
-      postId: comment.postId,
-      commentId,
-      text: "Огонёк на ваш ответ",
-      createdAt: Date.now(),
+      ...notification,
+      text: count > 1 ? `${parsed.text} ×${count}` : parsed.text,
     },
-    ...current.notifications,
+    ...notifications.filter((_, index) => index !== existingIndex),
   ];
 }
 
@@ -8127,19 +8150,10 @@ function resolveSafeBoardLayout(
   protectedRects: BoardRect[],
   maxX = 1800,
 ): BoardLayoutItem[] {
-  if (protectedRects.length === 0) {
-    const placed: BoardRect[] = [];
-    return layout.map((item, index) => {
-      const position = findOpenBoardPosition(item.position, placed, index, maxX, 0, 0, item.height, item.width);
-      placed.push(postPositionToRect(position, item.height, item.width));
-      return { ...item, position };
-    });
-  }
+  if (protectedRects.length === 0) return layout;
 
-  const placed: BoardRect[] = [];
   return layout.map((item) => {
-    const safePosition = resolveSafeBoardPosition(item.position, protectedRects, placed, maxX, item.height, item.width);
-    placed.push(postPositionToRect(safePosition, item.height, item.width));
+    const safePosition = resolveSafeBoardPosition(item.position, protectedRects, [], maxX, item.height, item.width);
     return { ...item, position: safePosition };
   });
 }
