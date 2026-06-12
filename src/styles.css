@@ -2474,45 +2474,63 @@ body {
 
   .mobile-tabbar {
     position: fixed;
-    right: 18px;
+    right: auto;
     bottom: 14px;
-    left: 18px;
+    left: 50%;
     z-index: 30;
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(58px, 1fr));
+    display: flex;
+    width: fit-content;
+    max-width: calc(100vw - 28px);
+    align-items: center;
     gap: 4px;
     border: 1px solid var(--line);
     border-radius: 999px;
     background: color-mix(in srgb, var(--surface) 90%, transparent);
     padding: 5px;
     box-shadow: 0 12px 34px rgba(0, 0, 0, 0.12);
+    transform: translateX(-50%);
     backdrop-filter: blur(14px);
   }
 
   .mobile-tabbar button {
-    display: grid;
-    place-items: center;
-    gap: 2px;
-    min-width: 0;
+    display: inline-flex;
+    width: 48px;
+    min-width: 48px;
     min-height: 46px;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
     border: 0;
     border-radius: 999px;
     background: transparent;
     color: var(--muted);
-    font-size: 10px;
-    font-weight: 620;
+    padding: 0;
+    font-size: 12px;
+    font-weight: 820;
+    transition:
+      width 0.18s var(--ease-out),
+      background 0.18s ease,
+      color 0.18s ease;
   }
 
   .mobile-tabbar button.active {
+    width: auto;
+    min-width: 92px;
     background: var(--surface-muted);
     color: var(--text);
+    padding: 0 14px;
   }
 
   .mobile-tabbar span {
+    display: none;
     overflow: hidden;
     max-width: 100%;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .mobile-tabbar button.active span {
+    display: inline;
   }
 
   .mobile-fab {
@@ -5787,15 +5805,12 @@ body {
   .mobile-tabbar {
     right: 8px;
     bottom: max(8px, env(safe-area-inset-bottom));
-    left: 8px;
-    grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+    left: 50%;
     padding: 5px;
   }
 
   .mobile-tabbar button {
     min-height: 48px;
-    border-radius: 10px;
-    font-size: 10px;
   }
 
   .create-space-layer {
