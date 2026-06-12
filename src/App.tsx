@@ -356,6 +356,7 @@ function App() {
   const sharedStateReadyRef = useRef(false);
   const sharedStateVersionRef = useRef<number | null>(null);
   const skipNextSharedStateWriteRef = useRef(false);
+  const joinedInviteKeysRef = useRef(new Set<string>());
   const viewedPostKeysRef = useRef(new Set<string>());
   const socialStateWriteTimerRef = useRef<number | null>(null);
 
@@ -459,6 +460,19 @@ function App() {
           ? wallById.get(activePost.wallId)
           : undefined;
   const shellAccentStyle = getWallAccentStyle(activePaletteWall);
+
+  useEffect(() => {
+    if (!activeUser || !activeSpace || !activeInviteCode) return;
+    if (activeSpace.privacyMode !== "link" && activeSpace.privacyMode !== "invite") return;
+    if (canManageWall(activeSpace, activeUser.id) || followedWallIds.has(activeSpace.id)) return;
+    if (!isWallInviteActive(activeSpace.invite, activeInviteCode, activeUser.id)) return;
+
+    const joinKey = `${activeUser.id}:${activeSpace.id}:${activeInviteCode}`;
+    if (joinedInviteKeysRef.current.has(joinKey)) return;
+    joinedInviteKeysRef.current.add(joinKey);
+    joinWallByInvite(activeSpace.id, activeInviteCode);
+  }, [activeInviteCode, activeSpace, activeUser, followedWallIds]);
+
   const matchingUsers = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     if (!normalizedQuery) return [];
@@ -858,7 +872,7 @@ function App() {
     if (!hasPublishablePostDraft(text, attachments, postOptions)) return;
     const walls = ensureWallExists(state.walls, wallId, state.users);
     const targetWall = walls.find((wall) => wall.id === wallId);
-    if (!canPublishToWall(targetWall, activeUser.id)) return;
+    if (!canPublishToWall(targetWall, activeUser.id, followedWallIds)) return;
     const position = getNewBoardPostPosition(state.posts.filter((post) => post.wallId === wallId), {
       appearance: postOptions.appearance,
       attachments,
@@ -1566,6 +1580,51 @@ function App() {
       actor: activeUser,
       targetId,
       targetType,
+    });
+  }
+
+  function joinWallByInvite(wallId: string, inviteCode: string) {
+    if (!activeUser) return;
+
+    setState((current) => {
+      const existing = current.follows.some(
+        (follow) => follow.userId === current.activeUserId && follow.targetType === "wall" && follow.targetId === wallId,
+      );
+
+      return {
+        ...current,
+        walls: current.walls.map((wall) =>
+          wall.id === wallId && wall.invite
+            ? {
+                ...wall,
+                invite: {
+                  ...wall.invite,
+                  usedBy: Array.from(new Set([...wall.invite.usedBy, current.activeUserId])).slice(0, 200),
+                },
+              }
+            : wall,
+        ),
+        follows: existing
+          ? current.follows
+          : [
+              {
+                id: crypto.randomUUID(),
+                userId: current.activeUserId,
+                targetId: wallId,
+                targetType: "wall",
+                createdAt: Date.now(),
+              },
+              ...current.follows,
+            ],
+      };
+    });
+
+    dispatchSharedAction({
+      type: "wall.join",
+      actorId: activeUser.id,
+      actor: activeUser,
+      wallId,
+      inviteCode,
     });
   }
 
@@ -3095,7 +3154,7 @@ function SpacePage({
   const viewCount = posts.reduce((sum, post) => sum + getPostViewCount(post), 0);
   const isFollowing = followedWallIds.has(space.id);
   const isPinnedInMenu = pinnedWallIds.has(space.id);
-  const canPublish = activeUser ? canPublishToWall(space, activeUser.id) : false;
+  const canPublish = activeUser ? canPublishToWall(space, activeUser.id, followedWallIds) : false;
   const canManage = activeUser ? canManageWall(space, activeUser.id) : false;
   const fieldBoardHeight = getBoardCanvasHeight(posts);
 
@@ -8619,13 +8678,13 @@ function canViewWall(
   if (wall.privacyMode !== "link" && wall.privacyMode !== "invite") return true;
   if (userId && canManageWall(wall, userId)) return true;
   if (followedWallIds.has(wall.id)) return true;
-  return isWallInviteActive(wall.invite, inviteCode);
+  return isWallInviteActive(wall.invite, inviteCode, userId);
 }
 
-function isWallInviteActive(invite: WallInviteSettings | undefined, code: string): boolean {
+function isWallInviteActive(invite: WallInviteSettings | undefined, code: string, userId?: string): boolean {
   if (!invite || !code || invite.code !== code.trim()) return false;
   if (invite.expiresAt && invite.expiresAt < Date.now()) return false;
-  if (invite.maxUses && invite.usedBy.length >= invite.maxUses) return false;
+  if (invite.maxUses && !invite.usedBy.includes(userId ?? "") && invite.usedBy.length >= invite.maxUses) return false;
   return true;
 }
 
@@ -8636,10 +8695,14 @@ function canMoveSharedPost(post: Post | undefined, walls: Wall[], userId: string
   return canManageWall(walls.find((wall) => wall.id === post.wallId), userId);
 }
 
-function canPublishToWall(wall: Wall | undefined, userId: string): boolean {
+function canPublishToWall(wall: Wall | undefined, userId: string, followedWallIds: Set<string>): boolean {
   if (!wall) return false;
   if (wall.id.startsWith(profileWallPrefix)) return true;
-  return wall.publishMode !== "owner" || canManageWall(wall, userId);
+  const canManage = canManageWall(wall, userId);
+  if ((wall.privacyMode === "link" || wall.privacyMode === "invite") && !canManage && !followedWallIds.has(wall.id)) {
+    return false;
+  }
+  return wall.publishMode !== "owner" || canManage;
 }
 
 function isMinecraftAdminUserId(userId: string): boolean {

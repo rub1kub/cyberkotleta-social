@@ -266,6 +266,8 @@ function applySocialStateAction(state, action) {
       return applyVotePollAction(withActor, action, actorId);
     case "follow.toggle":
       return applyToggleFollowAction(withActor, action, actorId);
+    case "wall.join":
+      return applyJoinWallAction(withActor, action, actorId);
     case "connection.create":
       return applyCreateConnectionAction(withActor, action, actorId);
     case "connection.delete":
@@ -294,7 +296,7 @@ function applyCreatePostAction(state, action, actorId) {
 
   const stateWithWall = ensureActionWallExists(state, wallId, actorId);
   const wall = stateWithWall.walls.find((item) => item.id === wallId);
-  if (!canPublishToWall(wall, actorId)) throw new ActionRejectedError(403, "Cannot publish to wall");
+  if (!canPublishToWall(wall, actorId, stateWithWall)) throw new ActionRejectedError(403, "Cannot publish to wall");
 
   const postId = normalizeActionId(incomingPost.id) || randomUUID();
   if (stateWithWall.posts.some((post) => post.id === postId)) return stateWithWall;
@@ -710,6 +712,51 @@ function applyToggleFollowAction(state, action, actorId) {
   };
 }
 
+function applyJoinWallAction(state, action, actorId) {
+  const wallId = normalizeActionId(action.wallId);
+  const inviteCode = normalizeInviteCode(action.inviteCode);
+  if (!wallId) throw new ActionRejectedError(400, "Missing wall");
+
+  const wall = state.walls.find((item) => item.id === wallId);
+  if (!wall) throw new ActionRejectedError(404, "Wall not found");
+  if (wall.privacyMode !== "link" && wall.privacyMode !== "invite") return state;
+  if (canManageWall(wall, actorId)) return state;
+  if (!isWallInviteActive(wall.invite, inviteCode, actorId)) {
+    throw new ActionRejectedError(403, "Invalid wall invite");
+  }
+
+  const existingFollow = state.follows.some(
+    (follow) => follow.userId === actorId && follow.targetType === "wall" && follow.targetId === wallId,
+  );
+  const nextWalls = state.walls.map((item) => {
+    if (item.id !== wallId || !item.invite) return item;
+    return {
+      ...item,
+      invite: {
+        ...item.invite,
+        usedBy: Array.from(new Set([...(item.invite.usedBy ?? []), actorId])).slice(0, 200),
+      },
+    };
+  });
+
+  return {
+    ...state,
+    walls: nextWalls,
+    follows: existingFollow
+      ? state.follows
+      : [
+          {
+            id: randomUUID(),
+            userId: actorId,
+            targetId: wallId,
+            targetType: "wall",
+            createdAt: Date.now(),
+          },
+          ...state.follows,
+        ],
+  };
+}
+
 function applyCreateConnectionAction(state, action, actorId) {
   const connection = action.connection;
   if (!connection || typeof connection !== "object") throw new ActionRejectedError(400, "Missing connection");
@@ -956,10 +1003,30 @@ function canMovePost(post, walls, userId) {
   return canManageWall(walls.find((wall) => wall.id === post.wallId), userId);
 }
 
-function canPublishToWall(wall, userId) {
+function canPublishToWall(wall, userId, state) {
   if (!wall || !userId) return false;
   if (wall.id.startsWith(profileWallPrefix)) return true;
-  return wall.publishMode !== "owner" || canManageWall(wall, userId);
+  const canManage = canManageWall(wall, userId);
+  if ((wall.privacyMode === "link" || wall.privacyMode === "invite") && !canManage) {
+    const hasJoined = state?.follows?.some(
+      (follow) => follow.userId === userId && follow.targetType === "wall" && follow.targetId === wall.id,
+    );
+    if (!hasJoined) return false;
+  }
+  return wall.publishMode !== "owner" || canManage;
+}
+
+function normalizeInviteCode(value) {
+  if (typeof value !== "string") return "";
+  return value.trim().replace(/[^a-z0-9_-]/gi, "").slice(0, 32);
+}
+
+function isWallInviteActive(invite, code, userId) {
+  if (!invite || !code || normalizeInviteCode(invite.code) !== code) return false;
+  if (invite.expiresAt && invite.expiresAt < Date.now()) return false;
+  const usedBy = Array.isArray(invite.usedBy) ? invite.usedBy : [];
+  if (invite.maxUses && !usedBy.includes(userId) && usedBy.length >= invite.maxUses) return false;
+  return true;
 }
 
 function getPostSettings(post) {
@@ -1401,6 +1468,7 @@ const directActionTypes = new Set([
   "connection.delete",
   "poll.vote",
   "follow.toggle",
+  "wall.join",
   "wall.create",
   "wall.update",
   "pixel.paint",
@@ -1459,6 +1527,13 @@ function applyDirectSocialStateAction(db, action) {
         break;
       case "follow.toggle":
         syncFollowRowForAction(db, nextState, actorId, action);
+        break;
+      case "wall.join":
+        upsertChangedWallRow(db, nextState, normalizeActionId(action.wallId));
+        syncFollowRowForAction(db, nextState, actorId, {
+          targetId: action.wallId,
+          targetType: "wall",
+        });
         break;
       case "wall.create":
         insertNewWallRows(db, nextState, currentWallIds);

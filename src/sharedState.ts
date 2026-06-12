@@ -164,6 +164,13 @@ export type SharedStateAction =
       wall: Wall;
     }
   | {
+      type: "wall.join";
+      actorId: string;
+      actor?: UserProfile;
+      wallId: string;
+      inviteCode: string;
+    }
+  | {
       type: "wall.update";
       actorId: string;
       actor?: UserProfile;

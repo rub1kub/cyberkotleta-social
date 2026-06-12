@@ -354,6 +354,61 @@ try {
   });
   assert(actionWallUpdate.state.walls.find((wall) => wall.id === "space:smoke-wall")?.name === "Smoke updated", "wall.update action did not persist");
 
+  const actionInviteWall = await fetchJson(`http://127.0.0.1:${port}/api/social-state/actions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      type: "wall.create",
+      actorId: "rub1kub",
+      wall: {
+        id: "space:invite-smoke",
+        siteSectionId: "space",
+        name: "Invite smoke",
+        description: "",
+        rules: "",
+        privacyMode: "invite",
+        invite: { code: "smokeinvite", usedBy: [], maxUses: 1 },
+        publishMode: "open",
+      },
+    }),
+  });
+  assert(actionInviteWall.state.walls.some((wall) => wall.id === "space:invite-smoke" && wall.privacyMode === "invite"), "invite wall did not persist");
+
+  await expectActionStatus(port, 403, {
+    type: "post.create",
+    actorId: "guest",
+    post: {
+      id: "invite-post-before-join",
+      wallId: "space:invite-smoke",
+      text: "blocked",
+      attachments: [],
+    },
+  });
+
+  const actionJoinWall = await fetchJson(`http://127.0.0.1:${port}/api/social-state/actions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "wall.join", actorId: "guest", wallId: "space:invite-smoke", inviteCode: "smokeinvite" }),
+  });
+  assert(actionJoinWall.state.walls.find((wall) => wall.id === "space:invite-smoke")?.invite?.usedBy?.includes("guest"), "wall.join did not record invite use");
+  assert(actionJoinWall.state.follows.some((follow) => follow.userId === "guest" && follow.targetType === "wall" && follow.targetId === "space:invite-smoke"), "wall.join did not follow wall");
+
+  const actionInvitePost = await fetchJson(`http://127.0.0.1:${port}/api/social-state/actions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      type: "post.create",
+      actorId: "guest",
+      post: {
+        id: "invite-post-after-join",
+        wallId: "space:invite-smoke",
+        text: "allowed",
+        attachments: [],
+      },
+    }),
+  });
+  assert(actionInvitePost.state.posts.some((post) => post.id === "invite-post-after-join"), "invite joined user could not publish");
+
   const actionWallDelete = await fetchJson(`http://127.0.0.1:${port}/api/social-state/actions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
