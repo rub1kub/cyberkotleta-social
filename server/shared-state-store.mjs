@@ -272,6 +272,8 @@ function applySocialStateAction(state, action) {
       return applyVotePollAction(withActor, action, actorId);
     case "follow.toggle":
       return applyToggleFollowAction(withActor, action, actorId);
+    case "user.presence":
+      return applyUserPresenceAction(withActor, action, actorId);
     case "wall.join":
       return applyJoinWallAction(withActor, action, actorId);
     case "connection.create":
@@ -715,6 +717,32 @@ function applyToggleFollowAction(state, action, actorId) {
       ...state.follows,
     ],
     notifications: addFollowNotification(state, actorId, targetType, targetId),
+  };
+}
+
+function applyUserPresenceAction(state, action, actorId) {
+  const now = Date.now();
+  const actionLastSeenAt = Number(action.lastSeenAt);
+  const actionMinutes = Number(action.timeOnSiteMinutes);
+  const lastSeenAt = Number.isFinite(actionLastSeenAt) && actionLastSeenAt > 0 ? actionLastSeenAt : now;
+  const timeOnSiteMinutes = Number.isFinite(actionMinutes) && actionMinutes >= 0 ? Math.round(actionMinutes) : 0;
+
+  return {
+    ...state,
+    users: state.users.map((user) => {
+      if (user.id !== actorId) return user;
+
+      const nextStatus = typeof action.status === "string"
+        ? normalizeUserText(action.status, user.status ?? "").slice(0, 40)
+        : user.status;
+
+      return {
+        ...user,
+        status: nextStatus === "Онлайн" ? undefined : nextStatus,
+        lastSeenAt: Math.max(Number(user.lastSeenAt) || 0, lastSeenAt),
+        timeOnSiteMinutes: Math.max(Number(user.timeOnSiteMinutes) || 0, timeOnSiteMinutes),
+      };
+    }),
   };
 }
 
@@ -1474,6 +1502,7 @@ const directActionTypes = new Set([
   "connection.delete",
   "poll.vote",
   "follow.toggle",
+  "user.presence",
   "wall.join",
   "wall.create",
   "wall.update",
@@ -1533,6 +1562,9 @@ function applyDirectSocialStateAction(db, action) {
         break;
       case "follow.toggle":
         syncFollowRowForAction(db, nextState, actorId, action);
+        break;
+      case "user.presence":
+        upsertActorUserRow(db, nextState, actorId);
         break;
       case "wall.join":
         upsertChangedWallRow(db, nextState, normalizeActionId(action.wallId));

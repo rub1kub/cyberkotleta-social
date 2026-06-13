@@ -544,6 +544,28 @@ function App() {
       setState((current) => mergeSharedStateWithLocalSession(current, snapshot.state));
     });
   }, []);
+  const publishActiveUserPresence = useCallback((minutesToAdd = 0) => {
+    const now = Date.now();
+    const current = latestSocialStateRef.current;
+    const user = current.users.find((item) => item.id === current.activeUserId);
+    if (!user) return;
+
+    const nextUser: UserProfile = {
+      ...user,
+      lastSeenAt: now,
+      timeOnSiteMinutes: Math.max(0, Math.round((Number(user.timeOnSiteMinutes) || 0) + minutesToAdd)),
+    };
+
+    setState((stateSnapshot) => touchActiveUserPresence(stateSnapshot, now, minutesToAdd));
+    dispatchSharedAction({
+      type: "user.presence",
+      actorId: nextUser.id,
+      actor: nextUser,
+      lastSeenAt: nextUser.lastSeenAt,
+      timeOnSiteMinutes: nextUser.timeOnSiteMinutes,
+      status: nextUser.status,
+    });
+  }, [dispatchSharedAction]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -559,8 +581,8 @@ function App() {
   }, [pinnedWalls]);
 
   useEffect(() => {
-    setState((current) => touchActiveUserPresence(current));
-  }, [activeUser?.id]);
+    publishActiveUserPresence();
+  }, [activeUser?.id, publishActiveUserPresence]);
 
   useEffect(() => {
     setState((current) => normalizeRuntimeBoardCopy(current));
@@ -744,10 +766,10 @@ function App() {
   useEffect(() => {
     const interval = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
-      setState((current) => touchActiveUserPresence(current, Date.now(), 1));
+      publishActiveUserPresence(1);
     }, 60000);
     return () => window.clearInterval(interval);
-  }, []);
+  }, [publishActiveUserPresence]);
 
   function navigate(nextRoute: AppRoute) {
     setRoute(nextRoute);

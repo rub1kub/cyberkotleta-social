@@ -146,6 +146,14 @@ export type SharedStateAction =
       targetType: "user" | "wall";
     }
   | {
+      type: "user.presence";
+      actorId: string;
+      actor?: UserProfile;
+      lastSeenAt?: number;
+      timeOnSiteMinutes?: number;
+      status?: string;
+    }
+  | {
       type: "connection.create";
       actorId: string;
       actor?: UserProfile;

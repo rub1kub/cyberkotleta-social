@@ -330,6 +330,23 @@ try {
   assert(actionFollow.state.follows.some((follow) => follow.userId === "guest" && follow.targetType === "user" && follow.targetId === "rub1kub"), "follow.toggle action did not persist for actor");
   assert(!actionFollow.state.follows.some((follow) => follow.userId === "rub1kub" && follow.targetType === "user" && follow.targetId === "rub1kub"), "follow.toggle leaked to another user");
 
+  const presenceAt = Date.now();
+  const actionPresence = await fetchJson(`http://127.0.0.1:${port}/api/social-state/actions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      type: "user.presence",
+      actorId: "guest",
+      lastSeenAt: presenceAt,
+      timeOnSiteMinutes: 42,
+      status: "Онлайн",
+    }),
+  });
+  const presenceUser = actionPresence.state.users.find((user) => user.id === "guest");
+  assert(presenceUser?.lastSeenAt >= presenceAt, "user.presence did not persist lastSeenAt");
+  assert(presenceUser?.timeOnSiteMinutes >= 42, "user.presence did not persist time on site");
+  assert(presenceUser?.status === undefined, "user.presence should not store derived online status");
+
   const actionWall = await fetchJson(`http://127.0.0.1:${port}/api/social-state/actions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
