@@ -4307,21 +4307,22 @@ body {
 
 .composer-resize-handle {
   position: absolute;
-  right: 64px;
-  bottom: 25px;
+  top: 50%;
+  right: -12px;
   z-index: 4;
   display: grid;
-  width: 30px;
-  height: 30px;
+  width: 24px;
+  height: 64px;
   place-items: center;
   border: 1px solid color-mix(in srgb, var(--post-accent, var(--accent)) 34%, var(--line));
   border-radius: 999px;
   background: color-mix(in srgb, var(--surface) 92%, transparent);
   color: var(--post-accent-2, var(--accent-2));
-  cursor: nwse-resize;
+  cursor: ew-resize;
   padding: 0;
   backdrop-filter: blur(14px);
-  opacity: 0.72;
+  opacity: 0.62;
+  transform: translateY(-50%);
   transition:
     background 0.16s ease,
     opacity 0.16s ease,
@@ -4331,15 +4332,21 @@ body {
 .composer-resize-handle:hover {
   background: color-mix(in srgb, var(--post-accent-soft, var(--accent-soft)) 72%, var(--surface));
   opacity: 1;
-  transform: translateY(-1px);
+  transform: translateY(-50%) translateX(1px);
 }
 
 .composer-resize-handle span {
-  width: 12px;
-  height: 12px;
-  border-right: 2px solid currentColor;
-  border-bottom: 2px solid currentColor;
-  border-radius: 0 0 4px 0;
+  width: 4px;
+  height: 28px;
+  border: 0;
+  border-radius: 999px;
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      currentColor 0 3px,
+      transparent 3px 7px
+    );
+  opacity: 0.86;
 }
 
 .draft-appearance-preview {
@@ -8011,8 +8018,8 @@ button:focus-visible {
 .wall-custom-color {
   position: relative;
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) auto;
-  min-height: 44px;
+  grid-template-columns: 34px minmax(0, 1fr) 46px;
+  min-height: 54px;
   align-items: center;
   gap: 12px;
   overflow: hidden;
@@ -8058,24 +8065,35 @@ button:focus-visible {
   white-space: nowrap;
 }
 
-.wall-custom-color strong {
-  color: var(--muted);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 850;
-  letter-spacing: 0;
+.wall-custom-color-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
 }
 
 .wall-custom-color input {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  position: static;
+  width: 46px;
+  height: 36px;
   border: 0;
+  border-radius: 12px;
   background: transparent;
   cursor: pointer;
-  opacity: 0;
   padding: 0;
+}
+
+.wall-custom-color input::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.wall-custom-color input::-webkit-color-swatch {
+  border: 1px solid color-mix(in srgb, #000000 16%, transparent);
+  border-radius: 12px;
+}
+
+.wall-custom-color input::-moz-color-swatch {
+  border: 1px solid color-mix(in srgb, #000000 16%, transparent);
+  border-radius: 12px;
 }
 
 .wall-custom-color small {

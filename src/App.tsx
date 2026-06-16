@@ -3653,6 +3653,7 @@ function Composer({
     <section
       className={composerClassName}
       style={composerStyle}
+      onDragEnter={handleDragOver}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -4446,13 +4447,16 @@ function WallColorPicker({
         style={{ "--wall-swatch": customAccentValue } as CSSProperties}
       >
         <i aria-hidden="true" />
-        <span>Свой цвет</span>
-        <strong>{customAccentValue.toUpperCase()}</strong>
+        <span className="wall-custom-color-copy">
+          <span>Свой цвет</span>
+          <small>{customAccentValue.toUpperCase()}</small>
+        </span>
         <input
           type="color"
           value={customAccentValue}
           onChange={(event) => onChange(event.target.value)}
           aria-label="Свой цвет доски"
+          title="Выбрать свой цвет"
         />
       </label>
     </div>
