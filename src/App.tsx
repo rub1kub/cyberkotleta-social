@@ -2613,6 +2613,7 @@ function FeedPage({
         postConnections={postConnections}
         postById={postById}
         positionOverrides={feedPositionOverrides}
+        preferWallAccent
         posts={posts}
         preferPostPositions={false}
         savedPostIds={savedPostIds}
@@ -2739,6 +2740,7 @@ function WallBoard({
   postConnections,
   postById,
   positionOverrides,
+  preferWallAccent = false,
   preferPostPositions = true,
   posts,
   resolveProtectedLayout = true,
@@ -2778,6 +2780,7 @@ function WallBoard({
   postConnections: PostConnection[];
   postById: Map<string, Post>;
   positionOverrides?: Record<string, PostPosition>;
+  preferWallAccent?: boolean;
   preferPostPositions?: boolean;
   posts: Post[];
   resolveProtectedLayout?: boolean;
@@ -3006,6 +3009,7 @@ function WallBoard({
                 surface="board"
                 user={userById.get(post.authorId)}
                 userById={userById}
+                preferWallAccent={preferWallAccent}
                 wall={wallById.get(post.wallId)}
                 onDelete={onDeletePost}
                 onEdit={onEditPost}
@@ -5115,6 +5119,7 @@ function PostCard({
   isSaved,
   objectKind,
   post,
+  preferWallAccent = false,
   repostedPost,
   surface = "stream",
   user,
@@ -5145,6 +5150,7 @@ function PostCard({
   isSaved: boolean;
   objectKind?: ObjectKind;
   post: Post;
+  preferWallAccent?: boolean;
   repostedPost?: Post;
   surface?: "stream" | "field" | "board";
   user: UserProfile | undefined;
@@ -5420,7 +5426,7 @@ function PostCard({
     canFinishConnection ? "connection-target" : "",
     isMenuOpen ? "menu-open" : "",
   ].filter(Boolean).join(" ");
-  const postAccentStyle = getPostAccentStyle(postAppearance, wall);
+  const postAccentStyle = getPostAccentStyle(postAppearance, wall, preferWallAccent);
 
   if (isMinecraftDownload) {
     return (
@@ -7846,8 +7852,12 @@ function getPostAppearance(post: Post | undefined): PostAppearance {
   };
 }
 
-function getPostAccentStyle(appearance: PostAppearance, wall: Wall | undefined): CSSProperties {
-  const accentOption = getWallAccentOption(appearance.accentColor ?? wall?.accentColor ?? wallAccentOptions[0].id);
+function getPostAccentStyle(appearance: PostAppearance, wall: Wall | undefined, preferWallAccent = false): CSSProperties {
+  const accentOption = getWallAccentOption(
+    preferWallAccent
+      ? wall?.accentColor ?? appearance.accentColor ?? wallAccentOptions[0].id
+      : appearance.accentColor ?? wall?.accentColor ?? wallAccentOptions[0].id,
+  );
 
   return {
     "--post-accent": accentOption.accent,
