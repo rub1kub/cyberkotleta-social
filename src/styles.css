@@ -611,8 +611,8 @@ textarea:focus-visible {
 
 .inline-format-menu {
   position: absolute;
-  top: calc(100% + 8px);
   right: 0;
+  bottom: 36px;
   left: auto;
 }
 
