@@ -2595,7 +2595,9 @@ function FeedPage({
         className="field-board"
         commentsByPostId={commentsByPostId}
         connectionSourcePostId={connectionSourcePostId}
+        dynamicFieldOffsets={false}
         emptyText={emptyText}
+        fieldDefaultOffsetY={feedDefaultOffsetY}
         hint="перетащи карточки по странице"
         pinnedPostIds={pinnedPostIds}
         postConnections={postConnections}
@@ -2720,6 +2722,7 @@ function WallBoard({
   commentsByPostId,
   connectionSourcePostId,
   dynamicFieldOffsets = true,
+  fieldDefaultOffsetY,
   emptyText,
   hint = "перетащи заметку",
   pinnedPostIds,
@@ -2758,6 +2761,7 @@ function WallBoard({
   commentsByPostId: Map<string, Comment[]>;
   connectionSourcePostId: string | null;
   dynamicFieldOffsets?: boolean;
+  fieldDefaultOffsetY?: number;
   emptyText: string;
   hint?: string;
   pinnedPostIds: Set<string>;
@@ -2802,7 +2806,7 @@ function WallBoard({
   const boardRef = useRef<HTMLElement | null>(null);
   const [boardWidth, setBoardWidth] = useState(0);
   const [boardDefaultX, setBoardDefaultX] = useState(() => isFieldBoard ? getInitialFieldBoardDefaultX() : 0);
-  const [boardDefaultY, setBoardDefaultY] = useState(() => isFieldBoard ? getInitialFieldBoardDefaultY() : 0);
+  const [boardDefaultY, setBoardDefaultY] = useState(() => isFieldBoard ? (fieldDefaultOffsetY ?? getInitialFieldBoardDefaultY()) : 0);
   const [protectedRects, setProtectedRects] = useState<BoardRect[]>([]);
   const protectedRectsRef = useRef<BoardRect[]>([]);
   const [previewPosition, setPreviewPosition] = useState<PostPosition | null>(null);
@@ -2842,7 +2846,7 @@ function WallBoard({
       const mainRect = node.closest(".main")?.getBoundingClientRect();
       const nextBoardWidth = Math.round(boardRect.width);
       const defaultStartX = Math.max(0, Math.round((mainRect?.left ?? boardRect.left) - boardRect.left));
-      const defaultStartY = dynamicFieldOffsets ? getFieldBoardContentStartY(node) : getInitialFieldBoardDefaultY(false);
+      const defaultStartY = fieldDefaultOffsetY ?? (dynamicFieldOffsets ? getFieldBoardContentStartY(node) : getInitialFieldBoardDefaultY(false));
       const maxDefaultX = Math.max(0, nextBoardWidth - boardCardWidth - boardGap - boardRightReserve);
       const nextProtectedRects = getFieldProtectedRects(node);
       protectedRectsRef.current = nextProtectedRects;
@@ -2861,7 +2865,7 @@ function WallBoard({
     const observer = new ResizeObserver(updateWidth);
     observer.observe(node);
     return () => observer.disconnect();
-  }, [dynamicFieldOffsets, isFieldBoard, posts.length]);
+  }, [dynamicFieldOffsets, fieldDefaultOffsetY, isFieldBoard, posts.length]);
 
   useEffect(() => {
     if (!drag) return;
@@ -4309,13 +4313,17 @@ function PostPollBlock({
   onVote: (postId: string, optionId: string) => void;
 }) {
   const totalVotes = poll.options.reduce((sum, option) => sum + option.voterIds.length, 0);
+  const pollQuestion = poll.question.trim();
+  const shouldShowQuestion = pollQuestion && pollQuestion.toLowerCase() !== "голосование";
 
   return (
     <div className="post-poll" data-no-open>
-      <div className="post-poll-head">
-        <Vote size={15} />
-        <strong>{poll.question}</strong>
-      </div>
+      {shouldShowQuestion ? (
+        <div className="post-poll-head">
+          <Vote size={15} />
+          <strong>{pollQuestion}</strong>
+        </div>
+      ) : null}
       {poll.options.map((option) => {
         const voted = Boolean(activeUserId && option.voterIds.includes(activeUserId));
         const percent = totalVotes > 0 ? Math.round((option.voterIds.length / totalVotes) * 100) : 0;
