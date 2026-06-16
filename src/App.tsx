@@ -8149,13 +8149,21 @@ function resolveBoardPostLayout(
   }: BoardLayoutOptions = {},
 ): BoardLayoutItem[] {
   const placed: BoardRect[] = [];
+  const stableDefaultIndexByPostId = usePostPositions
+    ? undefined
+    : new Map(
+        [...posts]
+          .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
+          .map((post, index) => [post.id, index]),
+      );
 
   return posts.map((post, index) => {
     const height = getEstimatedBoardCardHeight(post);
     const width = getEstimatedBoardCardWidth(post);
     const savedPosition = positionOverrides?.[post.id] ?? (usePostPositions ? post.position : undefined);
+    const layoutIndex = stableDefaultIndexByPostId?.get(post.id) ?? index;
     const desiredPosition = clampPostPosition(
-      savedPosition ?? getDefaultBoardPosition(index, defaultOffsetX, maxX, defaultOffsetY),
+      savedPosition ?? getDefaultBoardPosition(layoutIndex, defaultOffsetX, maxX, defaultOffsetY),
       getBoardMaxXForWidth(maxX, width),
     );
     const position = savedPosition
@@ -8163,7 +8171,7 @@ function resolveBoardPostLayout(
       : findOpenBoardPosition(
           desiredPosition,
           placed,
-          index,
+          layoutIndex,
           maxX,
           defaultOffsetX,
           defaultOffsetY,
