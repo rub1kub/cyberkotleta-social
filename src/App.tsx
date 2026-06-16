@@ -2196,14 +2196,7 @@ function stackNotificationItems(items: NotificationItem[]): StackedNotificationI
 
   for (const item of items) {
     const parsed = parseNotificationStackText(item.text);
-    const key = [
-      item.recipientId,
-      item.actorId,
-      item.kind,
-      item.postId ?? "",
-      item.commentId ?? "",
-      parsed.text,
-    ].join("|");
+    const key = getNotificationStackKey(item, parsed.text);
     const existing = groups.get(key);
 
     if (!existing) {
@@ -2219,6 +2212,8 @@ function stackNotificationItems(items: NotificationItem[]): StackedNotificationI
     if (item.createdAt > existing.createdAt) {
       existing.id = item.id;
       existing.createdAt = item.createdAt;
+      existing.postId = item.postId;
+      existing.commentId = item.commentId;
       existing.readAt = item.readAt;
     } else if (!item.readAt) {
       existing.readAt = undefined;
@@ -2238,6 +2233,21 @@ function parseNotificationStackText(text: string): { count: number; text: string
 
 function formatStackedNotificationText(item: StackedNotificationItem): string {
   return item.stackCount > 1 ? `${item.stackText} ×${item.stackCount}` : item.stackText;
+}
+
+function getNotificationStackKey(item: NotificationItem, text?: string): string {
+  const stackText = text ?? parseNotificationStackText(item.text).text;
+  const contextKey = item.kind === "reaction"
+    ? ""
+    : `${item.postId ?? ""}|${item.commentId ?? ""}`;
+
+  return [
+    item.recipientId,
+    item.actorId,
+    item.kind,
+    contextKey,
+    stackText,
+  ].join("|");
 }
 
 function PixelBattleLayer({
@@ -7286,15 +7296,9 @@ function addStackedNotification(
   notification: NotificationItem,
 ): NotificationItem[] {
   const parsed = parseNotificationStackText(notification.text);
+  const notificationKey = getNotificationStackKey(notification, parsed.text);
   const existingIndex = notifications.findIndex((item) => {
-    if (item.readAt) return false;
-    const existingText = parseNotificationStackText(item.text).text;
-    return item.recipientId === notification.recipientId &&
-      item.actorId === notification.actorId &&
-      item.kind === notification.kind &&
-      (item.postId ?? "") === (notification.postId ?? "") &&
-      (item.commentId ?? "") === (notification.commentId ?? "") &&
-      existingText === parsed.text;
+    return getNotificationStackKey(item) === notificationKey;
   });
 
   if (existingIndex === -1) return [notification, ...notifications];
