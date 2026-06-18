@@ -894,14 +894,18 @@ function App() {
     const walls = ensureWallExists(state.walls, wallId, state.users);
     const targetWall = walls.find((wall) => wall.id === wallId);
     if (!canPublishToWall(targetWall, activeUser.id, followedWallIds)) return;
-    const position = getNewBoardPostPosition(state.posts.filter((post) => post.wallId === wallId), {
-      appearance: postOptions.appearance,
-      attachments,
-      checklist: postOptions.checklist,
-      poll: postOptions.poll,
-      sketch: postOptions.sketch,
-      text: text.trim(),
-    });
+    const position = getNewBoardPostPosition(
+      state.posts.filter((post) => post.wallId === wallId),
+      {
+        appearance: postOptions.appearance,
+        attachments,
+        checklist: postOptions.checklist,
+        poll: postOptions.poll,
+        sketch: postOptions.sketch,
+        text: text.trim(),
+      },
+      wallId,
+    );
     const post: Post = {
       id: crypto.randomUUID(),
       wallId,
@@ -1348,11 +1352,15 @@ function App() {
     if (hasUserRepostedPost(sourcePost.id, activeUser.id, postById)) return;
 
     const wallId = getProfileWallId(activeUser.id);
-    const position = getNewBoardPostPosition(state.posts.filter((post) => post.wallId === wallId), {
-      attachments: [],
-      repostOfId: sourcePost.id,
-      text: "",
-    });
+    const position = getNewBoardPostPosition(
+      state.posts.filter((post) => post.wallId === wallId),
+      {
+        attachments: [],
+        repostOfId: sourcePost.id,
+        text: "",
+      },
+      wallId,
+    );
     const repost: Post = {
       id: crypto.randomUUID(),
       wallId,
@@ -2730,6 +2738,7 @@ function WallBoard({
   savedPostIds,
   title = "Доска",
   userById,
+  wallId,
   wallById,
   onDeletePost,
   onDeletePostConnection,
@@ -2770,6 +2779,7 @@ function WallBoard({
   savedPostIds: Set<string>;
   title?: string;
   userById: Map<string, UserProfile>;
+  wallId?: string;
   wallById: Map<string, Wall>;
   onDeletePost: (postId: string) => void;
   onDeletePostConnection: (connectionId: string) => void;
@@ -2925,7 +2935,12 @@ function WallBoard({
   }
 
   return (
-    <section ref={boardRef} className={className ? `wall-board ${className}` : "wall-board"} aria-label={title}>
+    <section
+      ref={boardRef}
+      className={className ? `wall-board ${className}` : "wall-board"}
+      data-wall-id={wallId}
+      aria-label={title}
+    >
       <div className="wall-board-head">
         <span>{title}</span>
         <small>{hint}</small>
@@ -3239,6 +3254,7 @@ function SpacePage({
           className="desktop-composer field-composer board-composer"
           targetLabel={`Доска ${formatWallTextName(space)}`}
           wall={space}
+          wallId={space.id}
           onPublish={onPublish}
         />
       ) : null}
@@ -3259,6 +3275,7 @@ function SpacePage({
         resolveProtectedLayout={false}
         savedPostIds={savedPostIds}
         userById={userById}
+        wallId={space.id}
         wallById={wallById}
         onDeletePost={onDeletePost}
         onDeletePostConnection={onDeletePostConnection}
@@ -3454,6 +3471,7 @@ function Composer({
   placeholder = "Новая заметка",
   targetLabel,
   wall,
+  wallId,
   onPublish,
 }: {
   className?: string;
@@ -3461,6 +3479,7 @@ function Composer({
   placeholder?: string;
   targetLabel?: string;
   wall?: Wall;
+  wallId?: string;
   onPublish: (text: string, attachments: MediaAttachment[], options?: Partial<PostDraftOptions>) => void;
 }) {
   const [text, setText] = useState("");
@@ -3649,6 +3668,7 @@ function Composer({
   return (
     <section
       className={composerClassName}
+      data-wall-id={wallId}
       style={composerStyle}
       onDragEnter={handleDragOver}
       onDragOver={handleDragOver}
@@ -6611,6 +6631,7 @@ function ProfilePage({
         className="desktop-composer field-composer board-composer"
         targetLabel={isOwnProfile ? "Моя доска" : `Доска ${user.name}`}
         wall={profileWall}
+        wallId={profileWallId}
         onPublish={onPublish}
       />
 
@@ -6630,6 +6651,7 @@ function ProfilePage({
         resolveProtectedLayout={false}
         savedPostIds={savedPostIds}
         userById={userById}
+        wallId={profileWallId}
         wallById={wallById}
         onDeletePost={onDeletePost}
         onDeletePostConnection={onDeletePostConnection}
@@ -8184,12 +8206,11 @@ function getNewBoardPostPosition(
     attachments: [],
     text: "",
   },
+  wallId?: string,
 ): PostPosition {
   const nextHeight = getEstimatedDraftPostHeight(draft);
   const nextWidth = getEstimatedDraftPostWidth(draft);
-  const board = typeof document !== "undefined"
-    ? document.querySelector<HTMLElement>(".field-board")
-    : null;
+  const board = getCurrentFieldBoard(wallId);
   if (!board) {
     const maxX = typeof window !== "undefined"
       ? Math.max(0, window.innerWidth - boardCardWidth - boardGap)
@@ -8216,7 +8237,7 @@ function getNewBoardPostPosition(
     postPositionToRect(position, height, width),
   );
   const desiredPosition =
-    getComposerDropPosition(board) ??
+    getComposerDropPosition(board, wallId) ??
     findOpenBoardPosition(
       getDefaultBoardPosition(existingPosts.length, 0, maxX),
       placed,
@@ -8231,6 +8252,17 @@ function getNewBoardPostPosition(
   return resolveSafeBoardPosition(desiredPosition, protectedRects, placed, maxX, nextHeight, nextWidth);
 }
 
+function getCurrentFieldBoard(wallId?: string): HTMLElement | null {
+  if (typeof document === "undefined") return null;
+
+  const boards = Array.from(document.querySelectorAll<HTMLElement>(".field-board"));
+  if (wallId) {
+    return boards.find((board) => board.dataset.wallId === wallId) ?? boards[0] ?? null;
+  }
+
+  return boards[0] ?? null;
+}
+
 function getFallbackNewBoardPosition(index: number): PostPosition {
   const isMobile = typeof window !== "undefined" && window.innerWidth < 760;
   return {
@@ -8239,10 +8271,15 @@ function getFallbackNewBoardPosition(index: number): PostPosition {
   };
 }
 
-function getComposerDropPosition(board: HTMLElement | null): PostPosition | null {
+function getComposerDropPosition(board: HTMLElement | null, wallId?: string): PostPosition | null {
   if (!board || typeof document === "undefined") return null;
 
-  const composer = document.querySelector<HTMLElement>(".board-composer, .field-create-popover .field-composer");
+  const page = board.closest<HTMLElement>(".field-page");
+  const scope = page ?? document;
+  const composers = Array.from(scope.querySelectorAll<HTMLElement>(".board-composer, .field-create-popover .field-composer"));
+  const composer = wallId
+    ? composers.find((item) => item.dataset.wallId === wallId) ?? composers[0]
+    : composers[0];
   if (!composer) return null;
 
   const boardRect = board.getBoundingClientRect();
@@ -8361,8 +8398,8 @@ function getFieldBoardContentStartY(board: HTMLElement): number {
 
 function getFieldProtectedRects(board: HTMLElement): BoardRect[] {
   const boardRect = board.getBoundingClientRect();
-  const selectors = [
-    ".site-panel",
+  const page = board.closest<HTMLElement>(".field-page");
+  const localSelectors = [
     ".topbar .search",
     ".field-command",
     ".field-filterbar",
@@ -8372,13 +8409,17 @@ function getFieldProtectedRects(board: HTMLElement): BoardRect[] {
     ".field-wall-cover",
     ".board-composer",
     ".profile-bio",
+  ];
+  const globalSelectors = [
+    ".site-panel",
+    ".topbar .search",
     ".mobile-tabbar",
     ".mobile-fab",
   ];
   const padding = 12;
 
-  return selectors.flatMap((selector) =>
-    Array.from(document.querySelectorAll<HTMLElement>(selector)).flatMap((element) => {
+  const collectRects = (scope: ParentNode, selectors: string[]) => selectors.flatMap((selector) =>
+    Array.from(scope.querySelectorAll<HTMLElement>(selector)).flatMap((element) => {
       const rect = element.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) return [];
       return [{
@@ -8389,6 +8430,11 @@ function getFieldProtectedRects(board: HTMLElement): BoardRect[] {
       }];
     }),
   );
+
+  return [
+    ...collectRects(page ?? document, localSelectors),
+    ...collectRects(document, globalSelectors),
+  ];
 }
 
 function findOpenBoardPosition(
