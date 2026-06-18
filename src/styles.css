@@ -3516,6 +3516,8 @@ body {
 }
 
 .post-menu-trigger {
+  position: relative;
+  z-index: 92;
   display: grid;
   width: 34px;
   height: 34px;
@@ -3532,36 +3534,42 @@ body {
   color: var(--text);
 }
 
+.post-card.menu-open .post-menu-trigger {
+  background: var(--surface-muted);
+  color: var(--text);
+}
+
 .post-menu {
   position: absolute;
   top: 42px;
   right: 0;
   z-index: 90;
   display: grid;
-  min-width: 184px;
-  gap: 2px;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: color-mix(in srgb, var(--surface) 98%, var(--bg));
-  padding: 6px;
+  min-width: 224px;
+  gap: 4px;
+  border: 1px solid color-mix(in srgb, var(--line) 86%, transparent);
+  border-radius: 18px;
+  background: var(--surface);
+  padding: 8px;
   box-shadow:
-    0 24px 64px rgba(0, 0, 0, 0.28),
-    0 0 0 1px color-mix(in srgb, var(--line) 78%, transparent);
+    0 28px 72px rgba(0, 0, 0, 0.34),
+    0 0 0 1px color-mix(in srgb, var(--surface) 72%, transparent);
   animation: pop-in 0.16s var(--ease-out) both;
   isolation: isolate;
 }
 
 .post-menu button {
   display: flex;
-  min-height: 34px;
+  min-height: 38px;
   align-items: center;
   gap: 9px;
   border: 0;
-  border-radius: 11px;
+  border-radius: 12px;
   background: transparent;
   color: var(--text);
-  padding: 0 10px;
+  padding: 0 11px;
   text-align: left;
+  white-space: nowrap;
 }
 
 .post-menu button:hover {
@@ -5273,6 +5281,15 @@ body {
   min-width: 58px;
   background: color-mix(in srgb, var(--post-accent, var(--accent)) 14%, var(--surface-muted));
   color: var(--post-accent-2, var(--accent-2));
+}
+
+.post-footer .react-count,
+.post-footer .stat-count,
+.post-footer .views-copy strong {
+  font-size: 15px;
+  font-weight: 820;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
 }
 
 .post-footer .react-button .react-icon,
@@ -7470,18 +7487,18 @@ button:focus-visible {
 }
 
 .post-card.board-card .post-menu {
-  top: 40px;
+  top: 38px;
   right: -2px;
-  min-width: 206px;
-  max-width: min(260px, calc(100vw - 36px));
-  max-height: 280px;
+  min-width: 228px;
+  max-width: min(300px, calc(100vw - 36px));
+  max-height: 340px;
   overflow: auto;
   z-index: 90;
 }
 
 .post-card.board-card .post-menu button {
-  min-height: 32px;
-  font-size: 13px;
+  min-height: 36px;
+  font-size: 14px;
   font-weight: 720;
 }
 
