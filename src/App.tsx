@@ -3691,7 +3691,7 @@ function Composer({
       {isDraggingFiles ? (
         <div className="composer-drop-overlay" data-no-open>
           <Paperclip size={18} />
-          <span>Отпусти файл</span>
+          <span>Отпусти медиа</span>
         </div>
       ) : null}
 
