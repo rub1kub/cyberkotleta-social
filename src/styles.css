@@ -2544,9 +2544,9 @@ body {
 
   .mobile-tabbar button {
     display: inline-flex;
-    width: 48px;
-    min-width: 48px;
-    min-height: 46px;
+    width: 44px;
+    min-width: 44px;
+    min-height: 44px;
     align-items: center;
     justify-content: center;
     gap: 7px;
@@ -2565,10 +2565,10 @@ body {
 
   .mobile-tabbar button.active {
     width: auto;
-    min-width: 92px;
+    min-width: 82px;
     background: var(--surface-muted);
     color: var(--text);
-    padding: 0 14px;
+    padding: 0 12px;
   }
 
   .mobile-tabbar span {
@@ -5886,7 +5886,7 @@ body {
   }
 
   .mobile-tabbar button {
-    min-height: 48px;
+    min-height: 44px;
   }
 
   .create-space-layer {

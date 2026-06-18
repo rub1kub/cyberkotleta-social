@@ -50,7 +50,6 @@ import {
   Trash2,
   Type,
   Trophy,
-  UserRound,
   Video,
   Volume2,
   VolumeX,
@@ -2067,9 +2066,7 @@ function App() {
 
       <MobileBottomNav
         activeRoute={route}
-        activeUser={activeUser}
         navItems={navItems}
-        onOpenProfile={openProfile}
         onNavigate={navigate}
       />
 
@@ -2368,15 +2365,11 @@ function PixelBattleLayer({
 
 function MobileBottomNav({
   activeRoute,
-  activeUser,
   navItems,
-  onOpenProfile,
   onNavigate,
 }: {
   activeRoute: AppRoute;
-  activeUser: UserProfile | undefined;
   navItems: AppNavItem[];
-  onOpenProfile: (profileId: string) => void;
   onNavigate: (route: AppRoute) => void;
 }) {
   return (
@@ -2391,16 +2384,6 @@ function MobileBottomNav({
           <span>{item.label}</span>
         </button>
       ))}
-
-      {activeUser ? (
-        <button
-          className={activeRoute.view === "profile" && activeRoute.profileId === activeUser.id ? "active" : ""}
-          onClick={() => onOpenProfile(activeUser.id)}
-        >
-          <UserRound size={20} />
-          <span>Я</span>
-        </button>
-      ) : null}
     </nav>
   );
 }
