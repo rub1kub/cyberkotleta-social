@@ -904,7 +904,7 @@ button:disabled {
 .media-lightbox {
   position: fixed;
   inset: 0;
-  z-index: 420;
+  z-index: 1200;
   display: grid;
   place-items: center;
   background: color-mix(in srgb, #050707 76%, transparent);
@@ -916,12 +916,16 @@ button:disabled {
 
 .media-lightbox img {
   display: block;
-  max-width: min(1120px, 94vw);
-  max-height: 88vh;
+  width: auto;
+  height: auto;
+  max-width: 96vw;
+  max-height: 90vh;
   border: 1px solid color-mix(in srgb, #ffffff 18%, transparent);
   border-radius: 24px;
   object-fit: contain;
   box-shadow: 0 28px 90px rgba(0, 0, 0, 0.42);
+  cursor: default;
+  user-select: none;
 }
 
 .media-lightbox-close {
@@ -938,6 +942,27 @@ button:disabled {
   background: color-mix(in srgb, var(--surface) 86%, transparent);
   color: var(--text);
   padding: 0;
+  cursor: pointer;
+  backdrop-filter: blur(16px);
+}
+
+@media (max-width: 640px) {
+  .media-lightbox {
+    padding: 12px;
+  }
+
+  .media-lightbox img {
+    max-width: 96vw;
+    max-height: 88vh;
+    border-radius: 18px;
+  }
+
+  .media-lightbox-close {
+    right: 12px;
+    top: 12px;
+    width: 46px;
+    height: 46px;
+  }
 }
 
 .media {

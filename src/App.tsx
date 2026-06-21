@@ -59,7 +59,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, ClipboardEvent, CSSProperties, DragEvent, FormEvent } from "react";
-import { flushSync } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import {
   buildDiscordAuthUrl,
   clearServerDiscordSession,
@@ -6855,6 +6855,19 @@ function MediaPreview({
 }) {
   const [isImageOpen, setIsImageOpen] = useState(false);
 
+  useEffect(() => {
+    if (!isImageOpen) return;
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsImageOpen(false);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isImageOpen]);
+
   if (attachment.type === "image") {
     return (
       <>
@@ -6867,18 +6880,9 @@ function MediaPreview({
         >
           <img className="media image-media" src={attachment.url} alt={attachment.name} />
         </button>
-        {isImageOpen ? (
-          <div className="media-lightbox" onClick={() => setIsImageOpen(false)} role="presentation" data-no-open>
-            <button
-              type="button"
-              className="media-lightbox-close"
-              onClick={() => setIsImageOpen(false)}
-              aria-label="Закрыть изображение"
-            >
-              <X size={18} />
-            </button>
-            <img src={attachment.url} alt={attachment.name} onClick={(event) => event.stopPropagation()} />
-          </div>
+        {isImageOpen ? createPortal(
+          <ImageLightbox attachment={attachment} onClose={() => setIsImageOpen(false)} />,
+          document.body,
         ) : null}
       </>
     );
@@ -6898,6 +6902,35 @@ function MediaPreview({
   }
 
   return <CustomAudioPlayer attachment={attachment} />;
+}
+
+function ImageLightbox({
+  attachment,
+  onClose,
+}: {
+  attachment: MediaAttachment;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="media-lightbox"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Изображение ${attachment.name}`}
+      data-no-open
+    >
+      <button
+        type="button"
+        className="media-lightbox-close"
+        onClick={onClose}
+        aria-label="Закрыть изображение"
+      >
+        <X size={20} />
+      </button>
+      <img src={attachment.url} alt={attachment.name} onClick={(event) => event.stopPropagation()} />
+    </div>
+  );
 }
 
 function CustomVideoPlayer({
